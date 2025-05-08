@@ -29,7 +29,10 @@ environment:
 # versions available, run `flutter pub outdated`.
 dependencies:
   cupertino_icons: ^1.0.8
-  excel: ^4.0.6
+  excel:
+    git:
+      url: https://github.com/Mohamed11Rshad/excel
+      ref: main
   file_picker: ^10.1.2
   flutter:
     sdk: flutter
