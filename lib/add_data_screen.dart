@@ -279,7 +279,13 @@ class _MainScreenState extends State<AddDataScreen> {
                             textAlign: TextAlign.center,
                           ),
                           SizedBox(height: _isLoading ? 16 : 8),
-                          if (_isLoading) const LinearProgressIndicator(),
+                          if (_isLoading)
+                            LinearProgressIndicator(
+                              color: AppColors.primaryColor,
+                              backgroundColor: AppColors.primaryColor.withAlpha(
+                                40,
+                              ),
+                            ),
                         ],
                       ),
                     ),

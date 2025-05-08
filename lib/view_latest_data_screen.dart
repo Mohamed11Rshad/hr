@@ -77,18 +77,11 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
     }
 
     if (_errorMessage.isNotEmpty) {
-      return Center(
-        child: Text(_errorMessage, style: const TextStyle(fontFamily: 'Arial')),
-      );
+      return Center(child: Text(_errorMessage));
     }
 
     if (_latestData.isEmpty) {
-      return const Center(
-        child: Text(
-          'لا توجد بيانات متاحة.',
-          style: TextStyle(fontFamily: 'Arial'),
-        ),
-      );
+      return const Center(child: Text('لا توجد بيانات متاحة.'));
     }
 
     return Directionality(
@@ -104,40 +97,43 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
             filterIconColor: Colors.white,
             sortIconColor: Colors.white,
           ),
-          child: SfDataGrid(
-            source: _dataSource,
-            columnWidthMode: ColumnWidthMode.auto,
-            allowSorting: true,
-            allowFiltering: true,
-            selectionMode: SelectionMode.single,
-            showHorizontalScrollbar: true,
-            showVerticalScrollbar: true,
-            isScrollbarAlwaysShown: true,
-            gridLinesVisibility: GridLinesVisibility.both,
-            headerGridLinesVisibility: GridLinesVisibility.both,
-            rowHeight: 50,
-            headerRowHeight: 55,
-            columns:
-                _columns
-                    .map(
-                      (column) => GridColumn(
-                        columnName: column,
-                        label: Container(
-                          padding: const EdgeInsets.all(8.0),
-                          alignment: Alignment.center,
-                          child: Text(
-                            column,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              fontSize: 14,
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: SfDataGrid(
+              source: _dataSource,
+              columnWidthMode: ColumnWidthMode.auto,
+              allowSorting: true,
+              allowFiltering: true,
+              selectionMode: SelectionMode.single,
+              showHorizontalScrollbar: true,
+              showVerticalScrollbar: true,
+              isScrollbarAlwaysShown: true,
+              gridLinesVisibility: GridLinesVisibility.both,
+              headerGridLinesVisibility: GridLinesVisibility.both,
+              rowHeight: 50,
+              headerRowHeight: 55,
+              columns:
+                  _columns
+                      .map(
+                        (column) => GridColumn(
+                          columnName: column,
+                          label: Container(
+                            padding: const EdgeInsets.all(8.0),
+                            alignment: Alignment.center,
+                            child: Text(
+                              column,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                fontSize: 14,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      ),
-                    )
-                    .toList(),
+                      )
+                      .toList(),
+            ),
           ),
         ),
       ),
@@ -183,7 +179,7 @@ class _LatestDataSource extends DataGridSource {
               padding: const EdgeInsets.all(8.0),
               child: Text(
                 dataGridCell.value.toString(),
-                style: const TextStyle(fontSize: 13),
+                style: const TextStyle(fontSize: 16),
                 overflow: TextOverflow.ellipsis,
               ),
             );
