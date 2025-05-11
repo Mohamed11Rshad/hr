@@ -40,7 +40,6 @@ class ExcelService {
         .join(', ');
     await db.execute('''
       CREATE TABLE "$tableName" (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
         $columns,
         upload_date TEXT
       )
@@ -54,21 +53,20 @@ class ExcelService {
   ) async {
     final batch = db.batch();
     int insertedCount = 0;
+    final existingRecords = await _getExistingRecords(tableName);
 
     // Add current date and time with custom format
     final now = DateTime.now();
-    // Format: YYYY-M-D h:mmAM/PM (e.g., 2025-4-5 5:37PM)
     final hour =
         now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour);
     final formattedDate =
         '${now.year}-${now.month}-${now.day} $hour:${now.minute.toString().padLeft(2, '0')}${now.hour >= 12 ? "pm" : "am"}';
 
     for (int i = 1; i < rows.length; i++) {
-      final values = <String, dynamic>{
-        'upload_date': formattedDate, // Add formatted upload date to each row
-      };
+      final values = <String, dynamic>{'upload_date': formattedDate};
       bool hasData = false;
 
+      // Build record from row
       for (int j = 0; j < headers.length && j < rows[i].length; j++) {
         final value = rows[i][j]?.value?.toString();
         if (value != null) {
@@ -77,7 +75,7 @@ class ExcelService {
         }
       }
 
-      if (hasData) {
+      if (hasData && !_isDuplicate(values, existingRecords)) {
         batch.insert(tableName, values);
         insertedCount++;
       }
@@ -85,6 +83,35 @@ class ExcelService {
 
     await batch.commit(noResult: true);
     return insertedCount;
+  }
+
+  // Add these helper methods
+  Future<List<Map<String, dynamic>>> _getExistingRecords(
+    String tableName,
+  ) async {
+    return await db.query(tableName);
+  }
+
+  bool _isDuplicate(
+    Map<String, dynamic> newRecord,
+    List<Map<String, dynamic>> existingRecords,
+  ) {
+    for (final existingRecord in existingRecords) {
+      bool isDuplicate = true;
+
+      for (final key in newRecord.keys) {
+        if (key == 'upload_date') continue; // Skip upload_date comparison
+
+        if (newRecord[key]?.toString() != existingRecord[key]?.toString()) {
+          isDuplicate = false;
+          break;
+        }
+      }
+
+      if (isDuplicate) return true;
+    }
+
+    return false;
   }
 
   List<String> _processHeaders(List<Data?> headerRow) {

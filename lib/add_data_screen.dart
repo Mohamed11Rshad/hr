@@ -143,7 +143,7 @@ class _MainScreenState extends State<AddDataScreen> {
           _selectedIndex == 0
               ? 'إضافة بيانات'
               : _selectedIndex == 1
-              ? 'عرض البيانات'
+              ? 'سجل المتغيرات'
               : 'عرض أحدث البيانات',
           style: TextStyle(
             fontSize: 18.sp.clamp(16, 22),
