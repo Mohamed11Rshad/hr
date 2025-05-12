@@ -137,9 +137,13 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         }
         _isLoading = false;
         _isLoadingMore = false;
+        
+        // Filter out the ID column before passing to the data source
+        final visibleColumns = _columns.where((column) => column != 'id' && !column.endsWith('_highlighted')).toList();
+        
         _dataSource = _TableDataSource(
           _tableData,
-          _columns,
+          visibleColumns,
           _arabicColumnNames,
         );
       });
@@ -178,28 +182,28 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
 
       for (final uniqueRecord in uniqueData) {
         bool allFieldsMatch = true;
-
-        // Compare all fields except metadata fields
+        
+        // Compare all fields except metadata fields and id
         for (final column in _columns) {
-          if (column.endsWith('_highlighted')) continue;
-
+          if (column.endsWith('_highlighted') || column == 'id') continue;
+          
           if (record[column]?.toString() != uniqueRecord[column]?.toString()) {
             allFieldsMatch = false;
             break;
           }
         }
-
+        
         if (allFieldsMatch) {
           isDuplicate = true;
           break;
         }
       }
-
+      
       if (!isDuplicate) {
         uniqueData.add(record);
       }
     }
-
+    
     // Now group by badge number for highlighting differences
     final Map<String, List<Map<String, dynamic>>> recordsByBadgeNo = {};
 
@@ -401,8 +405,8 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
   List<GridColumn> _buildGridColumns() {
     return _columns
         .where(
-          (column) => !column.endsWith('_highlighted'),
-        ) // Exclude metadata columns
+          (column) => !column.endsWith('_highlighted') && column != 'id',
+        ) // Exclude metadata columns and id column
         .map((column) {
           return GridColumn(
             columnName: column,

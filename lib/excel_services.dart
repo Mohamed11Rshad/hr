@@ -40,6 +40,7 @@ class ExcelService {
         .join(', ');
     await db.execute('''
       CREATE TABLE "$tableName" (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         $columns,
         upload_date TEXT
       )
@@ -100,7 +101,8 @@ class ExcelService {
       bool isDuplicate = true;
 
       for (final key in newRecord.keys) {
-        if (key == 'upload_date') continue; // Skip upload_date comparison
+        // Skip upload_date and id in comparison
+        if (key == 'upload_date' || key == 'id') continue;
 
         if (newRecord[key]?.toString() != existingRecord[key]?.toString()) {
           isDuplicate = false;
