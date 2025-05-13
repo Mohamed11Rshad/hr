@@ -36,25 +36,92 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
         _isLoading = false;
         _errorMessage = 'قاعدة البيانات أو الجدول غير متوفر';
       });
+      print(
+        "Database or table name is null: db=${widget.db}, tableName=${widget.tableName}",
+      );
       return;
     }
 
     try {
+      print("Loading data from table: ${widget.tableName}");
+
+      // First, check if the table exists and has data
+      final tableCheck = await widget.db!.rawQuery(
+        "SELECT count(*) as count FROM \"${widget.tableName}\"",
+      );
+      final recordCount =
+          tableCheck.first['count'] as int? ?? 0; // Changed this line
+      print("Table ${widget.tableName} has $recordCount records");
+
+      if (recordCount == 0) {
+        setState(() {
+          _isLoading = false;
+          _latestData = [];
+        });
+        return;
+      }
+
+      // Find the Badge NO column name in the sanitized format
+      final tableInfo = await widget.db!.rawQuery(
+        'PRAGMA table_info("${widget.tableName}")',
+      );
+      print("Table columns: ${tableInfo.map((c) => c['name']).toList()}");
+
+      // Try multiple patterns to find the badge column
+      final badgeNoColumn = tableInfo
+          .map((col) => col['name'].toString())
+          .firstWhere(
+            (name) =>
+                name.toLowerCase().contains('badge'),
+            orElse: () => 'id', // Fallback to id if no badge column found
+          );
+
+      print("Using badge column: $badgeNoColumn");
+
+      // Try a simpler query first to see if we can get any data
+      final simpleData = await widget.db!.query(widget.tableName!, limit: 10);
+      print("Simple query returned ${simpleData.length} records");
+
+      if (simpleData.isEmpty) {
+        setState(() {
+          _isLoading = false;
+          _latestData = [];
+          _errorMessage = 'لا يمكن قراءة البيانات من الجدول';
+        });
+        return;
+      }
+
+      // Now try the more complex query
       final sql = '''
         SELECT t.*
         FROM "${widget.tableName}" t
         INNER JOIN (
-          SELECT "Badge NO.", MAX(id) AS max_id
+          SELECT "$badgeNoColumn", MAX(id) AS max_id
           FROM "${widget.tableName}"
-          GROUP BY "Badge NO."
+          GROUP BY "$badgeNoColumn"
         ) grouped
-        ON t."Badge NO." = grouped."Badge NO." AND t.id = grouped.max_id
+        ON t."$badgeNoColumn" = grouped."$badgeNoColumn" AND t.id = grouped.max_id
       ''';
 
+      print("Executing SQL: $sql");
+
       final data = await widget.db!.rawQuery(sql);
+      print("Query returned ${data.length} records");
 
       if (data.isNotEmpty) {
         _columns = data.first.keys.toList();
+        print("Columns found: $_columns");
+      } else {
+        // If the complex query fails, use the simple data
+        _columns = simpleData.first.keys.toList();
+        print("Using simple data with columns: $_columns");
+
+        setState(() {
+          _latestData = simpleData;
+          _isLoading = false;
+          _dataSource = _LatestDataSource(simpleData, _columns);
+        });
+        return;
       }
 
       setState(() {
@@ -63,6 +130,26 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
         _dataSource = _LatestDataSource(data, _columns);
       });
     } catch (e) {
+      print("Error loading data: $e");
+
+      // Try a fallback approach - just load all data
+      try {
+        final allData = await widget.db!.query(widget.tableName!);
+        if (allData.isNotEmpty) {
+          print("Fallback query returned ${allData.length} records");
+          _columns = allData.first.keys.toList();
+
+          setState(() {
+            _latestData = allData;
+            _isLoading = false;
+            _dataSource = _LatestDataSource(allData, _columns);
+          });
+          return;
+        }
+      } catch (fallbackError) {
+        print("Fallback also failed: $fallbackError");
+      }
+
       setState(() {
         _isLoading = false;
         _errorMessage = 'خطأ في تحميل البيانات: ${e.toString()}';

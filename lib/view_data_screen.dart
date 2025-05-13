@@ -121,6 +121,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
 
       if (data.isNotEmpty && !loadMore) {
         _columns = data.first.keys.toList();
+        print("Available columns: $_columns"); // Debug print
       }
 
       // Process data with cross-batch duplicate checking
@@ -133,14 +134,25 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         if (!loadMore) {
           _tableData = processedData;
         } else {
-          _tableData.addAll(processedData);
+          // Only add records that don't already exist in _tableData
+          for (final record in processedData) {
+            if (!_tableData.any((existing) => existing['id'] == record['id'])) {
+              _tableData.add(record);
+            }
+          }
         }
         _isLoading = false;
         _isLoadingMore = false;
-        
+
         // Filter out the ID column before passing to the data source
-        final visibleColumns = _columns.where((column) => column != 'id' && !column.endsWith('_highlighted')).toList();
-        
+        final visibleColumns =
+            _columns
+                .where(
+                  (column) =>
+                      column != 'id' && !column.endsWith('_highlighted'),
+                )
+                .toList();
+
         _dataSource = _TableDataSource(
           _tableData,
           visibleColumns,
@@ -164,10 +176,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     if (data.isEmpty) return [];
 
     final badgeNoColumn = _columns.firstWhere(
-      (col) =>
-          col.toLowerCase().contains('badge') ||
-          col.toLowerCase().contains('رقم') ||
-          col.toLowerCase().contains('الرقم'),
+      (col) => col.toLowerCase().contains('badge'),
       orElse: () => '',
     );
 
@@ -182,32 +191,45 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
 
       for (final uniqueRecord in uniqueData) {
         bool allFieldsMatch = true;
-        
+
         // Compare all fields except metadata fields and id
         for (final column in _columns) {
           if (column.endsWith('_highlighted') || column == 'id') continue;
-          
+
           if (record[column]?.toString() != uniqueRecord[column]?.toString()) {
             allFieldsMatch = false;
             break;
           }
         }
-        
+
         if (allFieldsMatch) {
           isDuplicate = true;
           break;
         }
       }
-      
+
       if (!isDuplicate) {
         uniqueData.add(record);
       }
     }
-    
+
     // Now group by badge number for highlighting differences
     final Map<String, List<Map<String, dynamic>>> recordsByBadgeNo = {};
 
-    // Group records by Badge NO
+    // If loading more data, include existing records in the comparison
+    if (checkExisting && _tableData.isNotEmpty) {
+      // First, group existing records by badge number
+      for (final record in _tableData) {
+        final badgeNo = record[badgeNoColumn]?.toString() ?? '';
+        if (badgeNo.isEmpty) continue;
+
+        recordsByBadgeNo
+            .putIfAbsent(badgeNo, () => [])
+            .add(Map<String, dynamic>.from(record));
+      }
+    }
+
+    // Group new records by Badge NO
     for (final record in uniqueData) {
       final badgeNo = record[badgeNoColumn]?.toString() ?? '';
       if (badgeNo.isEmpty) continue;
@@ -225,42 +247,89 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
       final records = entry.value;
 
       // Skip if we've already processed this badge number in a previous batch
-      if (checkExisting && _processedBadgeNumbers.contains(badgeNo)) {
+      // and there are no new records for this badge number
+      if (checkExisting &&
+          _processedBadgeNumbers.contains(badgeNo) &&
+          !records.any((r) => !_tableData.contains(r))) {
         continue;
       }
 
       // Add to processed set to prevent future duplicates
-      if (checkExisting) {
-        _processedBadgeNumbers.add(badgeNo);
-      }
+      _processedBadgeNumbers.add(badgeNo);
 
       // If only one record with this Badge NO, add it as is
       if (records.length == 1) {
-        processedData.add(records.first);
+        // Only add if it's a new record (not already in _tableData)
+        if (!checkExisting || !_tableData.contains(records.first)) {
+          processedData.add(records.first);
+        }
         continue;
       }
 
-      // Add first record as is
-      processedData.add(records.first);
+      // Sort records by id to ensure chronological order
+      records.sort(
+        (a, b) => (a['id'] as int? ?? 0).compareTo(b['id'] as int? ?? 0),
+      );
 
-      // Compare each record with the previous one
-      for (int i = 1; i < records.length; i++) {
-        final previousRecord = records[i - 1];
-        final currentRecord = records[i];
+      // If loading more data, only add new records
+      if (checkExisting) {
+        final newRecords =
+            records
+                .where(
+                  (r) =>
+                      !_tableData.any((existing) => existing['id'] == r['id']),
+                )
+                .toList();
 
-        // Compare
-        for (final column in _columns) {
-          // Skip Badge NO column in comparison
-          if (column == badgeNoColumn) continue;
+        if (newRecords.isEmpty) continue;
 
-          if (previousRecord[column]?.toString() !=
-              currentRecord[column]?.toString()) {
-            // Mark this cell as different by adding metadata
-            currentRecord['${column}_highlighted'] = true;
+        // Compare each new record with all previous records with the same badge number
+        for (final newRecord in newRecords) {
+          for (final existingRecord in records.where(
+            (r) =>
+                r['id'] != newRecord['id'] &&
+                (r['id'] as int? ?? 0) < (newRecord['id'] as int? ?? 0),
+          )) {
+            // Compare columns
+            for (final column in _columns) {
+              // Skip Badge NO column and metadata columns in comparison
+              if (column == badgeNoColumn ||
+                  column.endsWith('_highlighted') ||
+                  column == 'id')
+                continue;
+
+              if (existingRecord[column]?.toString() !=
+                  newRecord[column]?.toString()) {
+                // Mark this cell as different
+                newRecord['${column}_highlighted'] = true;
+              }
+            }
           }
+          processedData.add(newRecord);
         }
+      } else {
+        // Original logic for first page load
+        processedData.add(records.first);
 
-        processedData.add(currentRecord);
+        // Compare each record with the previous one
+        for (int i = 1; i < records.length; i++) {
+          final previousRecord = records[i - 1];
+          final currentRecord = records[i];
+
+          // Compare
+          for (final column in _columns) {
+            // Skip Badge NO column in comparison
+            if (column == badgeNoColumn) continue;
+
+            if (previousRecord[column]?.toString() !=
+                currentRecord[column]?.toString()) {
+              // Mark this cell as different by adding metadata
+              currentRecord['${column}_highlighted'] = true;
+            }
+          }
+
+          processedData.add(currentRecord);
+        }
       }
     }
 
