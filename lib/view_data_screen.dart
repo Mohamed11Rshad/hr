@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hr/core/app_colors.dart';
+import 'package:hr/database_service.dart';
+import 'package:hr/utils/data_processor.dart';
+import 'package:hr/utils/excel_exporter.dart';
+import 'package:hr/widgets/table_data_source.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
-import 'database_service.dart';
+import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 class ViewDataScreen extends StatefulWidget {
   final Database? db;
@@ -16,29 +19,26 @@ class ViewDataScreen extends StatefulWidget {
 }
 
 class _ViewDataScreenState extends State<ViewDataScreen> {
-  // Add this field to track all processed badge numbers
-  final Set<String> _processedBadgeNumbers = {};
-
   List<String> _tables = [];
   String? _selectedTable;
   List<Map<String, dynamic>> _tableData = [];
   List<String> _columns = [];
   bool _isLoading = true;
-  String _errorMessage = '';
-  late DataGridSource _dataSource;
-  final ScrollController _horizontalScrollController = ScrollController();
-  final ScrollController _verticalScrollController = ScrollController();
   bool _isLoadingMore = false;
-  final DataGridController _dataGridController = DataGridController();
+  String _errorMessage = '';
+  late TableDataSource _dataSource;
+  final ScrollController _verticalScrollController = ScrollController();
+  final int _pageSize = 50;
+  final Set<String> _processedBadgeNumbers = {};
 
-  // Pagination state
-  int _totalRecords = 0;
-
-  // Keep this as it's used for data fetching
-  final int _pageSize = 30;
-
-  // Map English column names to Arabic
-  final Map<String, String> _arabicColumnNames = {};
+  // Arabic column names mapping
+  final Map<String, String> _arabicColumnNames = {
+    'badge_no': 'رقم الشارة',
+    'name': 'الاسم',
+    'department': 'القسم',
+    'position': 'المنصب',
+    // Add more mappings as needed
+  };
 
   @override
   void initState() {
@@ -47,19 +47,23 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     _verticalScrollController.addListener(_scrollListener);
   }
 
+  @override
+  void dispose() {
+    _verticalScrollController.removeListener(_scrollListener);
+    _verticalScrollController.dispose();
+    super.dispose();
+  }
+
   void _scrollListener() {
-    if (_verticalScrollController.position.pixels >=
-            _verticalScrollController.position.maxScrollExtent * 0.8 &&
-        !_isLoadingMore) {
-      _loadTableData(_selectedTable!, loadMore: true);
+    if (_verticalScrollController.position.pixels ==
+        _verticalScrollController.position.maxScrollExtent) {
+      _loadMoreData();
     }
   }
 
-  @override
-  void dispose() {
-    _horizontalScrollController.dispose();
-    _verticalScrollController.dispose();
-    super.dispose();
+  Future<void> _loadMoreData() async {
+    if (_isLoadingMore || _selectedTable == null) return;
+    await _loadTableData(_selectedTable!, loadMore: true);
   }
 
   Future<void> _loadTables() async {
@@ -125,8 +129,11 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
       }
 
       // Process data with cross-batch duplicate checking
-      final processedData = _processAndMarkDifferentCells(
+      final processedData = DataProcessor.processAndMarkDifferentCells(
         data,
+        _columns,
+        _processedBadgeNumbers,
+        existingData: _tableData,
         checkExisting: loadMore,
       );
 
@@ -153,10 +160,11 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
                 )
                 .toList();
 
-        _dataSource = _TableDataSource(
+        _dataSource = TableDataSource(
           _tableData,
           visibleColumns,
           _arabicColumnNames,
+          onDeleteRecord: _deleteRecord,
         );
       });
     } catch (e) {
@@ -168,172 +176,90 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     }
   }
 
-  // Process and mark cells that differ between consecutive records with the same Badge NO
-  List<Map<String, dynamic>> _processAndMarkDifferentCells(
-    List<Map<String, dynamic>> data, {
-    bool checkExisting = false,
-  }) {
-    if (data.isEmpty) return [];
+  Future<void> _deleteRecord(Map<String, dynamic> record) async {
+    if (widget.db == null || _selectedTable == null) return;
 
-    final badgeNoColumn = _columns.firstWhere(
-      (col) => col.toLowerCase().contains('badge'),
-      orElse: () => '',
-    );
-
-    if (badgeNoColumn.isEmpty) {
-      return data; // No Badge NO column found, return original data
-    }
-
-    // First, remove exact duplicates from the incoming data
-    final uniqueData = <Map<String, dynamic>>[];
-    for (final record in data) {
-      bool isDuplicate = false;
-
-      for (final uniqueRecord in uniqueData) {
-        bool allFieldsMatch = true;
-
-        // Compare all fields except metadata fields and id
-        for (final column in _columns) {
-          if (column.endsWith('_highlighted') || column == 'id') continue;
-
-          if (record[column]?.toString() != uniqueRecord[column]?.toString()) {
-            allFieldsMatch = false;
-            break;
-          }
-        }
-
-        if (allFieldsMatch) {
-          isDuplicate = true;
-          break;
-        }
-      }
-
-      if (!isDuplicate) {
-        uniqueData.add(record);
-      }
-    }
-
-    // Now group by badge number for highlighting differences
-    final Map<String, List<Map<String, dynamic>>> recordsByBadgeNo = {};
-
-    // If loading more data, include existing records in the comparison
-    if (checkExisting && _tableData.isNotEmpty) {
-      // First, group existing records by badge number
-      for (final record in _tableData) {
-        final badgeNo = record[badgeNoColumn]?.toString() ?? '';
-        if (badgeNo.isEmpty) continue;
-
-        recordsByBadgeNo
-            .putIfAbsent(badgeNo, () => [])
-            .add(Map<String, dynamic>.from(record));
-      }
-    }
-
-    // Group new records by Badge NO
-    for (final record in uniqueData) {
-      final badgeNo = record[badgeNoColumn]?.toString() ?? '';
-      if (badgeNo.isEmpty) continue;
-
-      recordsByBadgeNo
-          .putIfAbsent(badgeNo, () => [])
-          .add(Map<String, dynamic>.from(record));
-    }
-
-    // Process and mark different cells for each group
-    final processedData = <Map<String, dynamic>>[];
-
-    for (final entry in recordsByBadgeNo.entries) {
-      final badgeNo = entry.key;
-      final records = entry.value;
-
-      // Skip if we've already processed this badge number in a previous batch
-      // and there are no new records for this badge number
-      if (checkExisting &&
-          _processedBadgeNumbers.contains(badgeNo) &&
-          !records.any((r) => !_tableData.contains(r))) {
-        continue;
-      }
-
-      // Add to processed set to prevent future duplicates
-      _processedBadgeNumbers.add(badgeNo);
-
-      // If only one record with this Badge NO, add it as is
-      if (records.length == 1) {
-        // Only add if it's a new record (not already in _tableData)
-        if (!checkExisting || !_tableData.contains(records.first)) {
-          processedData.add(records.first);
-        }
-        continue;
-      }
-
-      // Sort records by id to ensure chronological order
-      records.sort(
-        (a, b) => (a['id'] as int? ?? 0).compareTo(b['id'] as int? ?? 0),
+    try {
+      // Show confirmation dialog
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: const Text('تأكيد الحذف'),
+              content: const Text('هل أنت متأكد من حذف هذا العنصر؟'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('إلغاء'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('حذف'),
+                ),
+              ],
+            ),
       );
 
-      // If loading more data, only add new records
-      if (checkExisting) {
-        final newRecords =
-            records
+      if (confirmed != true) return;
+
+      // Delete from database
+      await widget.db!.delete(
+        _selectedTable!,
+        where: 'id = ?',
+        whereArgs: [record['id']],
+      );
+
+      // Update UI
+      setState(() {
+        _tableData.removeWhere((item) => item['id'] == record['id']);
+
+        // Recreate data source with updated data
+        final visibleColumns =
+            _columns
                 .where(
-                  (r) =>
-                      !_tableData.any((existing) => existing['id'] == r['id']),
+                  (column) =>
+                      column != 'id' && !column.endsWith('_highlighted'),
                 )
                 .toList();
 
-        if (newRecords.isEmpty) continue;
+        _dataSource = TableDataSource(
+          _tableData,
+          visibleColumns,
+          _arabicColumnNames,
+          onDeleteRecord: _deleteRecord,
+        );
+      });
 
-        // Compare each new record with all previous records with the same badge number
-        for (final newRecord in newRecords) {
-          for (final existingRecord in records.where(
-            (r) =>
-                r['id'] != newRecord['id'] &&
-                (r['id'] as int? ?? 0) < (newRecord['id'] as int? ?? 0),
-          )) {
-            // Compare columns
-            for (final column in _columns) {
-              // Skip Badge NO column and metadata columns in comparison
-              if (column == badgeNoColumn ||
-                  column.endsWith('_highlighted') ||
-                  column == 'id')
-                continue;
-
-              if (existingRecord[column]?.toString() !=
-                  newRecord[column]?.toString()) {
-                // Mark this cell as different
-                newRecord['${column}_highlighted'] = true;
-              }
-            }
-          }
-          processedData.add(newRecord);
-        }
-      } else {
-        // Original logic for first page load
-        processedData.add(records.first);
-
-        // Compare each record with the previous one
-        for (int i = 1; i < records.length; i++) {
-          final previousRecord = records[i - 1];
-          final currentRecord = records[i];
-
-          // Compare
-          for (final column in _columns) {
-            // Skip Badge NO column in comparison
-            if (column == badgeNoColumn) continue;
-
-            if (previousRecord[column]?.toString() !=
-                currentRecord[column]?.toString()) {
-              // Mark this cell as different by adding metadata
-              currentRecord['${column}_highlighted'] = true;
-            }
-          }
-
-          processedData.add(currentRecord);
-        }
-      }
+      // Show success message
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم حذف العنصر بنجاح')));
+    } catch (e) {
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ في حذف العنصر: ${e.toString()}')),
+      );
     }
+  }
 
-    return processedData;
+  Future<void> _exportToExcel() async {
+    if (_selectedTable == null) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    await ExcelExporter.exportToExcel(
+      context: context,
+      data: _tableData,
+      columns: _columns,
+      columnNames: _arabicColumnNames,
+      tableName: _selectedTable!,
+    );
+
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   @override
@@ -362,27 +288,54 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (_selectedTable != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Center(
-                child: Text(
-                  'إسم الجدول: $_selectedTable',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18.sp.clamp(16, 22),
-                    color: AppColors.primaryColor,
+            SizedBox(
+              height: 40,
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: 2,
+                    right: 0,
+                    child: SizedBox(
+                      height: 35,
+                      child: ElevatedButton.icon(
+                        onPressed: _exportToExcel,
+                        icon: const Icon(
+                          Icons.file_download,
+                          color: Colors.white,
+                        ),
+                        label: const Text(
+                          'إستخراج بصيغة Excel',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryColor,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        '$_selectedTable',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18.sp.clamp(16, 22),
+                          color: AppColors.primaryColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
 
           // Table data using Syncfusion DataGrid with styling
           Expanded(
             child:
                 _tableData.isEmpty
-                    ? Center(
-                      // ... existing empty state ...
+                    ? const Center(
+                      child: Text('لا توجد بيانات متاحة لهذا الجدول.'),
                     )
                     : Stack(
                       children: [
@@ -472,180 +425,53 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
   }
 
   List<GridColumn> _buildGridColumns() {
-    return _columns
-        .where(
-          (column) => !column.endsWith('_highlighted') && column != 'id',
-        ) // Exclude metadata columns and id column
-        .map((column) {
-          return GridColumn(
-            columnName: column,
-            label: Container(
-              padding: const EdgeInsets.all(8.0),
-              alignment: Alignment.center,
-              child: Text(
-                _arabicColumnNames[column] ?? column,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  fontSize: 14,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          );
-        })
-        .toList();
-  }
-}
-
-class _TableDataSource extends DataGridSource {
-  final List<Map<String, dynamic>> _data;
-  final List<String> _columns;
-  final Map<String, String> _arabicColumnNames;
-  final VoidCallback? onNeedMoreData;
-
-  _TableDataSource(
-    this._data,
-    this._columns,
-    this._arabicColumnNames, {
-    this.onNeedMoreData,
-  }) {
-    _dataGridRows =
-        _data.map<DataGridRow>((dataRow) {
-          return DataGridRow(
-            cells:
-                _columns.map<DataGridCell>((column) {
-                  // Special handling for upload_date column
-                  if (column == 'upload_date') {
-                    final value = dataRow[column]?.toString() ?? '';
-                    if (value.isNotEmpty) {
-                      try {
-                        final dateTime = DateTime.parse(value);
-                        return DataGridCell<String>(
-                          columnName: column,
-                          value:
-                              '${dateTime.toLocal().toString().split('.')[0]}',
-                        );
-                      } catch (e) {
-                        return DataGridCell<String>(
-                          columnName: column,
-                          value: value,
-                        );
-                      }
-                    }
-                    return DataGridCell<String>(
-                      columnName: column,
-                      value: 'غير متوفر',
-                    );
-                  }
-                  return DataGridCell<String>(
-                    columnName: column,
-                    value: dataRow[column]?.toString() ?? '',
-                  );
-                }).toList(),
-          );
-        }).toList();
-  }
-
-  List<DataGridRow> _dataGridRows = [];
-
-  @override
-  List<DataGridRow> get rows => _dataGridRows;
-
-  @override
-  DataGridRowAdapter buildRow(DataGridRow row) {
-    return DataGridRowAdapter(
-      color: rows.indexOf(row) % 2 == 0 ? Colors.white : Colors.blue.shade50,
-      cells:
-          row.getCells().map<Widget>((dataGridCell) {
-            // Check if this specific cell should be highlighted
-            final isHighlighted =
-                _data[rows.indexOf(row)].containsKey(
-                  '${dataGridCell.columnName}_highlighted',
-                ) &&
-                _data[rows.indexOf(
-                      row,
-                    )]['${dataGridCell.columnName}_highlighted'] ==
-                    true;
-
-            // Skip rendering the metadata columns used for highlighting
-            if (dataGridCell.columnName.endsWith('_highlighted')) {
-              return Container();
-            }
-
-            if (dataGridCell.columnName == 'upload_date') {
-              return Container(
-                alignment: Alignment.center,
-                padding: const EdgeInsets.all(8.0),
-                child: Text(
-                  dataGridCell.value.toString(),
-                  style: TextStyle(
-                    color:
-                        dataGridCell.value == 'غير متوفر'
-                            ? Colors.red.shade300
-                            : Colors.blue.shade800,
-                    fontSize: 13,
-                    fontWeight:
-                        dataGridCell.value != 'غير متوفر'
-                            ? FontWeight.w500
-                            : FontWeight.normal,
+    final columns =
+        _columns
+            .where(
+              (column) => !column.endsWith('_highlighted') && column != 'id',
+            ) // Exclude metadata columns and id column
+            .map((column) {
+              return GridColumn(
+                columnName: column,
+                label: Container(
+                  padding: const EdgeInsets.all(8.0),
+                  alignment: Alignment.center,
+                  child: Text(
+                    _arabicColumnNames[column] ?? column,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      fontSize: 14,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               );
-            }
+            })
+            .toList();
 
-            return Container(
-              alignment: Alignment.center,
-              padding: const EdgeInsets.all(8.0),
-              decoration:
-                  isHighlighted
-                      ? BoxDecoration(
-                        color: Colors.yellow.shade200,
-                        border: Border.all(
-                          color: Colors.orange.shade300,
-                          width: 1,
-                        ),
-                        borderRadius: BorderRadius.circular(4),
-                      )
-                      : null,
-              child: Text(
-                dataGridCell.value.toString(),
-                style: TextStyle(
-                  color:
-                      isHighlighted
-                          ? Colors.red.shade800
-                          : Colors.grey.shade800,
-                  fontSize: 13,
-                  fontWeight:
-                      isHighlighted ? FontWeight.bold : FontWeight.normal,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            );
-          }).toList(),
+    // Add delete column with sorting and filtering disabled
+    columns.add(
+      GridColumn(
+        columnName: 'actions',
+        width: 80,
+        allowSorting: false,
+        allowFiltering: false,
+        label: Container(
+          padding: const EdgeInsets.all(8.0),
+          alignment: Alignment.center,
+          child: const Text(
+            'حذف',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ),
     );
-  }
 
-  @override
-  int compare(DataGridRow? a, DataGridRow? b, SortColumnDetails sortColumn) {
-    if (a == null || b == null) {
-      return 0;
-    }
-
-    final String? valueA =
-        a
-            .getCells()
-            .firstWhere((cell) => cell.columnName == sortColumn.name)
-            .value;
-    final String? valueB =
-        b
-            .getCells()
-            .firstWhere((cell) => cell.columnName == sortColumn.name)
-            .value;
-
-    return sortColumn.sortDirection == DataGridSortDirection.ascending
-        ? valueA?.compareTo(valueB ?? '') ?? 0
-        : valueB?.compareTo(valueA ?? '') ?? 0;
+    return columns;
   }
 }

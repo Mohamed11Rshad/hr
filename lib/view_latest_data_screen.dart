@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:hr/core/app_colors.dart';
+import 'package:hr/utils/excel_exporter.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
@@ -24,6 +27,9 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
   String _errorMessage = '';
   late DataGridSource _dataSource;
 
+  // Empty column names mapping since we're using original column names
+  final Map<String, String> _columnNames = {};
+
   @override
   void initState() {
     super.initState();
@@ -34,7 +40,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
     if (widget.db == null || widget.tableName == null) {
       setState(() {
         _isLoading = false;
-        _errorMessage = 'قاعدة البيانات أو الجدول غير متوفر';
+        _errorMessage = 'Database or table not available';
       });
       print(
         "Database or table name is null: db=${widget.db}, tableName=${widget.tableName}",
@@ -49,8 +55,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
       final tableCheck = await widget.db!.rawQuery(
         "SELECT count(*) as count FROM \"${widget.tableName}\"",
       );
-      final recordCount =
-          tableCheck.first['count'] as int? ?? 0; // Changed this line
+      final recordCount = tableCheck.first['count'] as int? ?? 0;
       print("Table ${widget.tableName} has $recordCount records");
 
       if (recordCount == 0) {
@@ -71,8 +76,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
       final badgeNoColumn = tableInfo
           .map((col) => col['name'].toString())
           .firstWhere(
-            (name) =>
-                name.toLowerCase().contains('badge'),
+            (name) => name.toLowerCase().contains('badge'),
             orElse: () => 'id', // Fallback to id if no badge column found
           );
 
@@ -86,7 +90,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
         setState(() {
           _isLoading = false;
           _latestData = [];
-          _errorMessage = 'لا يمكن قراءة البيانات من الجدول';
+          _errorMessage = 'Cannot read data from table';
         });
         return;
       }
@@ -152,9 +156,30 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
 
       setState(() {
         _isLoading = false;
-        _errorMessage = 'خطأ في تحميل البيانات: ${e.toString()}';
+        _errorMessage = 'Error loading data: ${e.toString()}';
       });
     }
+  }
+
+  Future<void> _exportToExcel() async {
+    if (widget.tableName == null || _latestData.isEmpty) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    await ExcelExporter.exportToExcel(
+      context: context,
+      data: _latestData,
+      columns: _columns,
+      columnNames:
+          _columnNames, // Using empty mapping to keep original column names
+      tableName: "${widget.tableName!}_latest",
+    );
+
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   @override
@@ -168,60 +193,113 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
     }
 
     if (_latestData.isEmpty) {
-      return const Center(child: Text('لا توجد بيانات متاحة.'));
+      return const Center(child: Text('No data available.'));
     }
 
     return Directionality(
       textDirection: TextDirection.ltr,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: SfDataGridTheme(
-          data: SfDataGridThemeData(
-            headerColor: Colors.blue.shade700,
-            gridLineColor: Colors.grey.shade300,
-            gridLineStrokeWidth: 1.0,
-            selectionColor: Colors.blue.shade100,
-            filterIconColor: Colors.white,
-            sortIconColor: Colors.white,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: SfDataGrid(
-              source: _dataSource,
-              columnWidthMode: ColumnWidthMode.auto,
-              allowSorting: true,
-              allowFiltering: true,
-              selectionMode: SelectionMode.single,
-              showHorizontalScrollbar: true,
-              showVerticalScrollbar: true,
-              isScrollbarAlwaysShown: true,
-              gridLinesVisibility: GridLinesVisibility.both,
-              headerGridLinesVisibility: GridLinesVisibility.both,
-              rowHeight: 50,
-              headerRowHeight: 55,
-              columns:
-                  _columns
-                      .map(
-                        (column) => GridColumn(
-                          columnName: column,
-                          label: Container(
-                            padding: const EdgeInsets.all(8.0),
-                            alignment: Alignment.center,
-                            child: Text(
-                              column,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                                fontSize: 14,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Add export button and title
+            SizedBox(
+              height: 40,
+              child: Stack(
+                children: [
+                  Directionality(
+                    textDirection: TextDirection.rtl,
+                    child: Positioned(
+                      top: 2,
+                      right: 0,
+                      child: SizedBox(
+                        height: 35,
+                        child: ElevatedButton.icon(
+                          onPressed: _exportToExcel,
+                          icon: const Icon(
+                            Icons.file_download,
+                            color: Colors.white,
+                          ),
+                          label: const Text(
+                            'إستخراج بصيغة Excel',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryColor,
                           ),
                         ),
-                      )
-                      .toList(),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        '${widget.tableName}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18.sp.clamp(16, 22),
+                          color: AppColors.primaryColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
+
+            // Data grid
+            Expanded(
+              child: SfDataGridTheme(
+                data: SfDataGridThemeData(
+                  headerColor: Colors.blue.shade700,
+                  gridLineColor: Colors.grey.shade300,
+                  gridLineStrokeWidth: 1.0,
+                  selectionColor: Colors.blue.shade100,
+                  filterIconColor: Colors.white,
+                  sortIconColor: Colors.white,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: SfDataGrid(
+                    source: _dataSource,
+                    columnWidthMode: ColumnWidthMode.auto,
+                    allowSorting: true,
+                    allowFiltering: true,
+                    selectionMode: SelectionMode.single,
+                    showHorizontalScrollbar: true,
+                    showVerticalScrollbar: true,
+                    isScrollbarAlwaysShown: true,
+                    gridLinesVisibility: GridLinesVisibility.both,
+                    headerGridLinesVisibility: GridLinesVisibility.both,
+                    rowHeight: 50,
+                    headerRowHeight: 55,
+                    columns:
+                        _columns
+                            .map(
+                              (column) => GridColumn(
+                                columnName: column,
+                                label: Container(
+                                  padding: const EdgeInsets.all(8.0),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    column,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            )
+                            .toList(),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
