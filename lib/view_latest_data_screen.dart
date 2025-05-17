@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Add this import for clipboard functionality
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hr/core/app_colors.dart';
 import 'package:hr/utils/excel_exporter.dart';
@@ -26,6 +27,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
   bool _isLoading = true;
   String _errorMessage = '';
   late DataGridSource _dataSource;
+  final Set<String> _hiddenColumns = <String>{};
 
   // Empty column names mapping since we're using original column names
   final Map<String, String> _columnNames = {};
@@ -182,6 +184,106 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
     });
   }
 
+  // Method to copy cell content to clipboard
+  void _copyCellContent(String content) {
+    Clipboard.setData(ClipboardData(text: content));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم النسخ'), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  void _refreshDataSource() {
+    final visibleColumns =
+        _columns.where((column) => !_hiddenColumns.contains(column)).toList();
+
+    _dataSource = _LatestDataSource(_latestData, visibleColumns);
+    setState(() {}); // Trigger rebuild
+  }
+
+  void _showColumnVisibilityDialog() {
+    // Include all columns including 'id' in the dialog
+    final visibleColumns = _columns.toList();
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: const Text('إظهار/إخفاء الأعمدة'),
+                  content: SizedBox(
+                    width: double.maxFinite.clamp(0, 800),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Add "Select All" checkbox
+                        CheckboxListTile(
+                          title: const Text('تحديد الكل'),
+                          value: _hiddenColumns.isEmpty,
+                          onChanged: (bool? value) {
+                            setDialogState(() {
+                              setState(() {
+                                if (value == true) {
+                                  // Show all columns
+                                  _hiddenColumns.clear();
+                                } else {
+                                  // Hide all columns
+                                  _hiddenColumns.addAll(visibleColumns);
+                                }
+                              });
+                            });
+
+                            // Refresh the data source
+                            _refreshDataSource();
+                          },
+                        ),
+                        const Divider(),
+                        // List of columns
+                        Expanded(
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: visibleColumns.length,
+                            itemBuilder: (context, index) {
+                              final column = visibleColumns[index];
+                              final displayName =
+                                  _columnNames[column] ?? column;
+
+                              return CheckboxListTile(
+                                title: Text(displayName),
+                                value: !_hiddenColumns.contains(column),
+                                onChanged: (bool? value) {
+                                  // Update both the dialog state and the widget state
+                                  setDialogState(() {
+                                    setState(() {
+                                      if (value == false) {
+                                        _hiddenColumns.add(column);
+                                      } else {
+                                        _hiddenColumns.remove(column);
+                                      }
+                                    });
+                                  });
+
+                                  // Refresh the data source with updated column visibility
+                                  _refreshDataSource();
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('إغلاق'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -208,39 +310,59 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
               height: 40,
               child: Stack(
                 children: [
-                  Directionality(
-                    textDirection: TextDirection.rtl,
-                    child: Positioned(
-                      top: 2,
-                      right: 0,
+                  Positioned(
+                    top: 2,
+                    right: 0,
+                    child: Directionality(
+                      textDirection: TextDirection.rtl,
                       child: SizedBox(
                         height: 35,
-                        child: ElevatedButton.icon(
-                          onPressed: _exportToExcel,
-                          icon: const Icon(
-                            Icons.file_download,
-                            color: Colors.white,
-                          ),
-                          label: const Text(
-                            'إستخراج بصيغة Excel',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primaryColor,
-                          ),
+                        child: Row(
+                          children: [
+                            // Add column visibility button
+                            ElevatedButton.icon(
+                              onPressed: _showColumnVisibilityDialog,
+                              icon: const Icon(
+                                Icons.visibility,
+                                color: Colors.white,
+                              ),
+                              label: const Text(
+                                'إظهار/إخفاء الأعمدة',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primaryColor,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Export button
+                            ElevatedButton.icon(
+                              onPressed: _exportToExcel,
+                              icon: const Icon(
+                                Icons.file_download,
+                                color: Colors.white,
+                              ),
+                              label: const Text(
+                                'إستخراج بصيغة Excel',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primaryColor,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
                   ),
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        '${widget.tableName}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18.sp.clamp(16, 22),
-                          color: AppColors.primaryColor,
-                        ),
+                  Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      '${widget.tableName}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18.sp.clamp(16, 22),
+                        color: AppColors.primaryColor,
                       ),
                     ),
                   ),
@@ -255,7 +377,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
                   headerColor: Colors.blue.shade700,
                   gridLineColor: Colors.grey.shade300,
                   gridLineStrokeWidth: 1.0,
-                  selectionColor: Colors.blue.shade100,
+                  selectionColor: Colors.grey.shade400,
                   filterIconColor: Colors.white,
                   sortIconColor: Colors.white,
                 ),
@@ -274,8 +396,19 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
                     headerGridLinesVisibility: GridLinesVisibility.both,
                     rowHeight: 50,
                     headerRowHeight: 55,
+                    onCellSecondaryTap: (details) {
+                      final rowIndex = details.rowColumnIndex.rowIndex - 1;
+                      if (rowIndex >= 0 && rowIndex < _latestData.length) {
+                        final cellValue =
+                            _latestData[rowIndex][details.column.columnName]
+                                ?.toString() ??
+                            '';
+                        _copyCellContent(cellValue);
+                      }
+                    },
                     columns:
                         _columns
+                            .where((column) => !_hiddenColumns.contains(column))
                             .map(
                               (column) => GridColumn(
                                 columnName: column,

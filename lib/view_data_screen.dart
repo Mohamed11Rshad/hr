@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hr/core/app_colors.dart';
 import 'package:hr/database_service.dart';
@@ -30,6 +31,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
   final ScrollController _verticalScrollController = ScrollController();
   final int _pageSize = 50;
   final Set<String> _processedBadgeNumbers = {};
+  String? _lastCopiedCellInfo;
 
   // Arabic column names mapping
   final Map<String, String> _arabicColumnNames = {
@@ -151,21 +153,8 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         _isLoading = false;
         _isLoadingMore = false;
 
-        // Filter out the ID column before passing to the data source
-        final visibleColumns =
-            _columns
-                .where(
-                  (column) =>
-                      column != 'id' && !column.endsWith('_highlighted'),
-                )
-                .toList();
-
-        _dataSource = TableDataSource(
-          _tableData,
-          visibleColumns,
-          _arabicColumnNames,
-          onDeleteRecord: _deleteRecord,
-        );
+        // Refresh the data source with current column visibility
+        _refreshDataSource();
       });
     } catch (e) {
       setState(() {
@@ -267,6 +256,9 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     return _buildContent(context);
   }
 
+  // Add a set to track hidden columns
+  final Set<String> _hiddenColumns = <String>{};
+
   Widget _buildContent(BuildContext context) {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -297,19 +289,40 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
                     right: 0,
                     child: SizedBox(
                       height: 35,
-                      child: ElevatedButton.icon(
-                        onPressed: _exportToExcel,
-                        icon: const Icon(
-                          Icons.file_download,
-                          color: Colors.white,
-                        ),
-                        label: const Text(
-                          'إستخراج بصيغة Excel',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryColor,
-                        ),
+                      child: Row(
+                        children: [
+                          // Add column visibility button
+                          ElevatedButton.icon(
+                            onPressed: _showColumnVisibilityDialog,
+                            icon: const Icon(
+                              Icons.visibility,
+                              color: Colors.white,
+                            ),
+                            label: const Text(
+                              'إظهار/إخفاء الأعمدة',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primaryColor,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Existing export button
+                          ElevatedButton.icon(
+                            onPressed: _exportToExcel,
+                            icon: const Icon(
+                              Icons.file_download,
+                              color: Colors.white,
+                            ),
+                            label: const Text(
+                              'إستخراج بصيغة Excel',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primaryColor,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -371,6 +384,23 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
                               headerRowHeight: 55,
                               frozenColumnsCount: 1,
                               allowColumnsResizing: true,
+                              onCellSecondaryTap: (details) {
+                                // Skip action column
+                                if (details.column.columnName != 'actions') {
+                                  final rowIndex =
+                                      details.rowColumnIndex.rowIndex - 1;
+                                  if (rowIndex >= 0 &&
+                                      rowIndex < _tableData.length) {
+                                    final cellValue =
+                                        _tableData[rowIndex][details
+                                                .column
+                                                .columnName]
+                                            ?.toString() ??
+                                        '';
+                                    _copyCellContent(cellValue);
+                                  }
+                                }
+                              },
                               verticalScrollController:
                                   _verticalScrollController,
                               columns: _buildGridColumns(),
@@ -424,12 +454,125 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     );
   }
 
+  // Add method to show column visibility dialog
+  void _showColumnVisibilityDialog() {
+    final visibleColumns =
+        _columns
+            .where(
+              (column) => !column.endsWith('_highlighted') && column != 'id',
+            )
+            .toList();
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: const Text('إظهار/إخفاء الأعمدة'),
+                  content: SizedBox(
+                    width: double.maxFinite.clamp(0, 800),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Add "Select All" checkbox
+                        CheckboxListTile(
+                          title: const Text('تحديد الكل'),
+                          value: _hiddenColumns.isEmpty,
+                          onChanged: (bool? value) {
+                            setDialogState(() {
+                              setState(() {
+                                if (value == true) {
+                                  // Show all columns
+                                  _hiddenColumns.clear();
+                                } else {
+                                  // Hide all columns
+                                  _hiddenColumns.addAll(visibleColumns);
+                                }
+                              });
+                            });
+
+                            // Refresh the data source
+                            _refreshDataSource();
+                          },
+                        ),
+                        const Divider(),
+                        // List of columns
+                        Expanded(
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: visibleColumns.length,
+                            itemBuilder: (context, index) {
+                              final column = visibleColumns[index];
+                              final displayName =
+                                  _arabicColumnNames[column] ?? column;
+
+                              return CheckboxListTile(
+                                title: Text(displayName),
+                                value: !_hiddenColumns.contains(column),
+                                onChanged: (bool? value) {
+                                  // Update both the dialog state and the widget state
+                                  setDialogState(() {
+                                    setState(() {
+                                      if (value == false) {
+                                        _hiddenColumns.add(column);
+                                      } else {
+                                        _hiddenColumns.remove(column);
+                                      }
+                                    });
+                                  });
+
+                                  // Refresh the data source with updated column visibility
+                                  _refreshDataSource();
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('إغلاق'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
+  // Add method to refresh data source with current column visibility
+  void _refreshDataSource() {
+    final visibleColumns =
+        _columns
+            .where(
+              (column) =>
+                  column != 'id' &&
+                  !column.endsWith('_highlighted') &&
+                  !_hiddenColumns.contains(column),
+            )
+            .toList();
+
+    _dataSource = TableDataSource(
+      _tableData,
+      visibleColumns,
+      _arabicColumnNames,
+      onDeleteRecord: _deleteRecord,
+    );
+  }
+
+  // Update the _buildGridColumns method to respect hidden columns
   List<GridColumn> _buildGridColumns() {
     final columns =
         _columns
             .where(
-              (column) => !column.endsWith('_highlighted') && column != 'id',
-            ) // Exclude metadata columns and id column
+              (column) =>
+                  !column.endsWith('_highlighted') &&
+                  column != 'id' &&
+                  !_hiddenColumns.contains(column),
+            ) // Exclude metadata columns, id column, and hidden columns
             .map((column) {
               return GridColumn(
                 columnName: column,
@@ -450,28 +593,39 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
             })
             .toList();
 
-    // Add delete column with sorting and filtering disabled
-    columns.add(
-      GridColumn(
-        columnName: 'actions',
-        width: 80,
-        allowSorting: false,
-        allowFiltering: false,
-        label: Container(
-          padding: const EdgeInsets.all(8.0),
-          alignment: Alignment.center,
-          child: const Text(
-            'حذف',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-              fontSize: 14,
+    // Only add delete column if there are other visible columns
+    if (columns.isNotEmpty) {
+      columns.add(
+        GridColumn(
+          columnName: 'actions',
+          width: 80,
+          allowSorting: false,
+          allowFiltering: false,
+          label: Container(
+            padding: const EdgeInsets.all(8.0),
+            alignment: Alignment.center,
+            child: const Text(
+              'حذف',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                fontSize: 14,
+              ),
             ),
           ),
         ),
-      ),
-    );
+      );
+    }
 
     return columns;
+  }
+
+  // Update the _loadTableData method to call _refreshDataSource
+
+  void _copyCellContent(String content) {
+    Clipboard.setData(ClipboardData(text: content));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم النسخ'), duration: const Duration(seconds: 2)),
+    );
   }
 }
