@@ -29,7 +29,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
   String _errorMessage = '';
   late TableDataSource _dataSource;
   final ScrollController _verticalScrollController = ScrollController();
-  final int _pageSize = 50;
+  final int _pageSize = 80;
   final Set<String> _processedBadgeNumbers = {};
   String? _lastCopiedCellInfo;
 

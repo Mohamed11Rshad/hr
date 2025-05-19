@@ -7,6 +7,7 @@ import 'package:hr/core/app_colors.dart';
 import 'package:hr/database_service.dart';
 import 'package:hr/excel_services.dart';
 import 'package:hr/file_picker_service.dart';
+import 'package:hr/promotions_screen.dart'; // Add this import
 import 'package:hr/view_data_screen.dart';
 import 'package:hr/view_latest_data_screen.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -144,7 +145,9 @@ class _MainScreenState extends State<AddDataScreen> {
               ? 'إضافة بيانات'
               : _selectedIndex == 1
               ? 'سجل المتغيرات'
-              : 'عرض أحدث البيانات',
+              : _selectedIndex == 2
+              ? 'عرض أحدث البيانات'
+              : 'الترقيات',
           style: TextStyle(
             fontSize: 18.sp.clamp(16, 22),
             fontWeight: FontWeight.bold,
@@ -199,6 +202,21 @@ class _MainScreenState extends State<AddDataScreen> {
                 Navigator.pop(context);
               },
             ),
+            SizedBox(height: 12),
+
+            // Add new menu item for Promotions
+            ListTile(
+              title: const Text('الترقيات'),
+              selected: _selectedIndex == 3,
+              selectedColor: AppColors.primaryColor,
+              titleTextStyle: TextStyle(fontSize: 16.sp.clamp(16, 22)),
+              textColor: Colors.black,
+              selectedTileColor: AppColors.primaryColor.withAlpha(40),
+              onTap: () {
+                _onItemTapped(3);
+                Navigator.pop(context);
+              },
+            ),
           ],
         ),
       ),
@@ -207,7 +225,9 @@ class _MainScreenState extends State<AddDataScreen> {
               ? _buildAddDataScreen()
               : _selectedIndex == 1
               ? ViewDataScreen(db: _db)
-              : ViewLatestDataScreen(db: _db, tableName: _latestTable),
+              : _selectedIndex == 2
+              ? ViewLatestDataScreen(db: _db, tableName: _latestTable)
+              : PromotionsScreen(db: _db, tableName: _latestTable),
     );
   }
 
