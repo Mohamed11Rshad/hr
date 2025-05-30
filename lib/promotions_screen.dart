@@ -44,9 +44,14 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
     'Status': 'Status',
     'Adjusted_Eligible_Date': 'Adjus Elig',
     'Basic': 'Old Basic',
+    'Next_Grade': 'Next Grade',
     '4% Adj': '4% Adj',
     'Annual_Increment': 'Annual Increment',
     'New_Basic': 'New Basic',
+    'Position_Text': 'Position',
+    'Grade_Range': 'Grade Range',
+    'Promotion_Band': 'Promotion Band',
+    'Last_Promotion_Dt': 'Last Promotion',
   };
 
   // List of columns we want to display
@@ -59,9 +64,14 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
     'status',
     'Adjusted_Eligible_Date',
     'Basic',
+    'Next_Grade',
     '4% Adj',
     'Annual_Increment',
     'New_Basic',
+    'Position_Text',
+    'Grade_Range',
+    'Promotion_Band',
+    'Last_Promotion_Dt',
   ];
 
   @override
@@ -167,7 +177,7 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
       }
 
       // Process the data to add calculated columns
-      final processedData = _processDataWithCalculatedColumns(data);
+      final processedData = await _processDataWithCalculatedColumns(data);
 
       setState(() {
         if (_currentPage == 0) {
@@ -190,17 +200,38 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
   }
 
   // Add method to process data and add calculated columns
-  List<Map<String, dynamic>> _processDataWithCalculatedColumns(
+  Future<List<Map<String, dynamic>>> _processDataWithCalculatedColumns(
     List<Map<String, dynamic>> data,
-  ) {
-    // Create a new list to hold the processed data
+  ) async {
     final processedData = <Map<String, dynamic>>[];
 
     // Add calculated columns to each record
     for (final record in data) {
       final newRecord = Map<String, dynamic>.from(record);
 
-      // Calculate 4% Adj
+      // Calculate Next Grade (assuming 'Grade' column exists)
+      final gradeValue = record['Grade']?.toString() ?? '';
+      if (gradeValue.startsWith('0')) {
+        gradeValue.replaceFirst('0', '');
+      }
+      String nextGrade = '';
+      if (gradeValue.isNotEmpty) {
+        try {
+          // Parse the grade value, removing leading zeros
+          final gradeInt =
+              int.tryParse(gradeValue.replaceAll(RegExp(r'^0+'), '')) ?? 0;
+          // Increment by 1
+          nextGrade = (gradeInt + 1).toString();
+          newRecord['Next_Grade'] = nextGrade;
+        } catch (e) {
+          // If parsing fails, just use the original value
+          newRecord['Next_Grade'] = gradeValue;
+        }
+      } else {
+        newRecord['Next_Grade'] = '';
+      }
+
+      // Calculate 4% Adj (assuming 'Basic' column exists)
       double oldBasic = 0;
       try {
         oldBasic = double.tryParse(record['Basic']?.toString() ?? '0') ?? 0;
@@ -240,10 +271,106 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
 
           // Check if it's January 1st
           if (date.month == 1 && date.day == 1) {
-            annualIncrement = 1000;
+            // Determine which tables to use based on pay_scale_area_text
+            final payScaleArea =
+                record['pay_scale_area_text']?.toString() ?? '';
+            String salaryScaleTable = 'Salary_Scale_A';
+            String annualIncreaseTable = 'Annual_Increase_A';
+
+            if (payScaleArea.contains('Category B')) {
+              salaryScaleTable = 'Salary_Scale_B';
+              annualIncreaseTable = 'Annual_Increase_B';
+            }
+            print("++++++++++++++++++++++ ${gradeValue}");
+            // Get data from Salary Scale table for the current grade
+            // Assuming Salary Scale table has columns like 'Grade', 'Midpoint', 'Maximum'
+            final salaryScaleData = await widget.db!.query(
+              salaryScaleTable,
+              where: 'Grade = ?',
+              whereArgs: [nextGrade], // Use original grade value for lookup
+            );
+
+            double midpoint = 0;
+            double maximum = 0;
+            if (salaryScaleData.isNotEmpty) {
+              debugPrint(
+                '++++++++++++++++++++++++++ Salary Scale Data: $salaryScaleData',
+              );
+              midpoint =
+                  double.tryParse(
+                    salaryScaleData.first['midpoint']?.toString() ?? '0',
+                  ) ??
+                  0;
+              maximum =
+                  double.tryParse(
+                    salaryScaleData.first['maximum']?.toString() ?? '0',
+                  ) ??
+                  0;
+            }
+            debugPrint(
+              '-------------------------- Midpoint: $midpoint, Maximum: $maximum',
+            );
+
+            // Calculate (old base + 4% adj)
+            final oldBasePlusAdj = oldBasic + fourPercentAdj;
+
+            debugPrint(
+              '-------------------------- Old Base: $oldBasic, 4% Adj: $fourPercentAdj, Old Base + Adj: $oldBasePlusAdj',
+            );
+
+            // Determine if below or above midpoint
+            String midpointStatus = (oldBasePlusAdj < midpoint) ? 'b' : 'a';
+
+            // Get data from Annual Increase table
+            // Assuming Annual Increase table has columns like 'Appraisal', 'Below Midpoint', 'Above Midpoint'
+            final appraisalValue =
+                record['Appraisal5']?.toString().split('-')[1] ?? '';
+
+            debugPrint(
+              '-------------------------- Appraisal Value: $appraisalValue',
+            );
+            final annualIncreaseData = await widget.db!.query(
+              annualIncreaseTable,
+              where: 'Grade = ?',
+              whereArgs: [nextGrade],
+            );
+            debugPrint(
+              '-------------------------- Annual Increase Data: $annualIncreaseData',
+            );
+            double potentialAnnualIncrement = 0;
+            if (annualIncreaseData.isNotEmpty) {
+              if (midpointStatus == 'b') {
+                potentialAnnualIncrement =
+                    double.tryParse(
+                      annualIncreaseData.first['${appraisalValue}_b']
+                              ?.toString() ??
+                          '0',
+                    ) ??
+                    0;
+              } else {
+                potentialAnnualIncrement =
+                    double.tryParse(
+                      annualIncreaseData.first['${appraisalValue}_a']
+                              ?.toString() ??
+                          '0',
+                    ) ??
+                    0;
+              }
+            }
+
+            // Compare potential increment with maximum from Salary Scale
+            annualIncrement = potentialAnnualIncrement;
+            if (annualIncrement > maximum) {
+              annualIncrement = maximum;
+            }
+            // Ensure increment is not negative
+            if (annualIncrement < 0) {
+              annualIncrement = 0;
+            }
           }
         } catch (e) {
-          // Handle date parsing error
+          // Handle date or calculation parsing error
+          print('Error calculating annual increment: $e');
         }
       }
       newRecord['Annual_Increment'] = annualIncrement.toStringAsFixed(2);
@@ -256,6 +383,9 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
     }
 
     // Add the calculated columns to the columns list if not already present
+    if (!_columns.contains('Next_Grade')) {
+      _columns.add('Next_Grade');
+    }
     if (!_columns.contains('4% Adj')) {
       _columns.add('4% Adj');
     }
@@ -264,6 +394,86 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
     }
     if (!_columns.contains('New_Basic')) {
       _columns.add('New_Basic');
+    }
+
+    // Ensure Position_Text comes after New_Basic
+    if (_columns.contains('Position_Text')) {
+      // Remove it from its current position
+      _columns.remove('Position_Text');
+      // Add it after New_Basic
+      final newBasicIndex = _columns.indexOf('New_Basic');
+      if (newBasicIndex >= 0) {
+        _columns.insert(newBasicIndex + 1, 'Position_Text');
+      } else {
+        _columns.add('Position_Text');
+      }
+    } else if (_columns.contains('New_Basic')) {
+      // If Position_Text doesn't exist but New_Basic does, add it after New_Basic
+      final newBasicIndex = _columns.indexOf('New_Basic');
+      _columns.insert(newBasicIndex + 1, 'Position_Text');
+    } else {
+      // If neither exists, just add it
+      _columns.add('Position_Text');
+    }
+
+    // Ensure Grade_Range comes after Position_Text
+    if (_columns.contains('Grade_Range')) {
+      // Remove it from its current position
+      _columns.remove('Grade_Range');
+      // Add it after Position_Text
+      final positionTextIndex = _columns.indexOf('Position_Text');
+      if (positionTextIndex >= 0) {
+        _columns.insert(positionTextIndex + 1, 'Grade_Range');
+      } else {
+        _columns.add('Grade_Range');
+      }
+    } else if (_columns.contains('Position_Text')) {
+      // If Grade_Range doesn't exist but Position_Text does, add it after Position_Text
+      final positionTextIndex = _columns.indexOf('Position_Text');
+      _columns.insert(positionTextIndex + 1, 'Grade_Range');
+    } else {
+      // If neither exists, just add it
+      _columns.add('Grade_Range');
+    }
+
+    // Ensure Promotion_Band comes after Grade_Range
+    if (_columns.contains('Promotion_Band')) {
+      // Remove it from its current position
+      _columns.remove('Promotion_Band');
+      // Add it after Grade_Range
+      final gradeRangeIndex = _columns.indexOf('Grade_Range');
+      if (gradeRangeIndex >= 0) {
+        _columns.insert(gradeRangeIndex + 1, 'Promotion_Band');
+      } else {
+        _columns.add('Promotion_Band');
+      }
+    } else if (_columns.contains('Grade_Range')) {
+      // If Promotion_Band doesn't exist but Grade_Range does, add it after Grade_Range
+      final gradeRangeIndex = _columns.indexOf('Grade_Range');
+      _columns.insert(gradeRangeIndex + 1, 'Promotion_Band');
+    } else {
+      // If neither exists, just add it
+      _columns.add('Promotion_Band');
+    }
+
+    // Ensure Last_Promotion_Dt comes after Promotion_Band
+    if (_columns.contains('Last_Promotion_Dt')) {
+      // Remove it from its current position
+      _columns.remove('Last_Promotion_Dt');
+      // Add it after Promotion_Band
+      final promotionBandIndex = _columns.indexOf('Promotion_Band');
+      if (promotionBandIndex >= 0) {
+        _columns.insert(promotionBandIndex + 1, 'Last_Promotion_Dt');
+      } else {
+        _columns.add('Last_Promotion_Dt');
+      }
+    } else if (_columns.contains('Promotion_Band')) {
+      // If Last_Promotion_Dt doesn't exist but Promotion_Band does, add it after Promotion_Band
+      final promotionBandIndex = _columns.indexOf('Promotion_Band');
+      _columns.insert(promotionBandIndex + 1, 'Last_Promotion_Dt');
+    } else {
+      // If neither exists, just add it
+      _columns.add('Last_Promotion_Dt');
     }
 
     return processedData;

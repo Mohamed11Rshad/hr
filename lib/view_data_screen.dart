@@ -83,7 +83,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         _tables = tables;
         _isLoading = false;
         if (tables.isNotEmpty) {
-          _selectedTable = tables.last; // Always pick the latest table
+          _selectedTable = 'Base_Sheet';
           _loadTableData(_selectedTable!);
         }
       });
