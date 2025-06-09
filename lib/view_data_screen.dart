@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hr/core/app_colors.dart';
-import 'package:hr/database_service.dart';
+import 'package:hr/services/database_service.dart';
 import 'package:hr/utils/data_processor.dart';
 import 'package:hr/utils/excel_exporter.dart';
 import 'package:hr/widgets/table_data_source.dart';
@@ -41,6 +41,10 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     'position': 'المنصب',
     // Add more mappings as needed
   };
+
+  // Add a set to track hidden columns
+  final Set<String> _hiddenColumns = <String>{};
+  final Set<String> _selectedCells = <String>{};
 
   @override
   void initState() {
@@ -256,8 +260,33 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     return _buildContent(context);
   }
 
-  // Add a set to track hidden columns
-  final Set<String> _hiddenColumns = <String>{};
+  // Add method to refresh data source with current column visibility
+  void _refreshDataSource() {
+    final visibleColumns =
+        _columns
+            .where(
+              (column) =>
+                  column != 'id' &&
+                  !column.endsWith('_highlighted') &&
+                  column !=
+                      'Prom_Reason' && // Exclude Prom_Reason from base sheet view
+                  !_hiddenColumns.contains(column),
+            )
+            .toList();
+
+    _dataSource = TableDataSource(
+      _tableData,
+      visibleColumns,
+      _arabicColumnNames,
+      onDeleteRecord: _deleteRecord,
+      onCellSelected: _onCellSelected,
+      onCopyCellContent: _copyCellContent,
+    );
+  }
+
+  void _onCellSelected(String cellValue) {
+    setState(() {}); // Refresh to show selection changes
+  }
 
   Widget _buildContent(BuildContext context) {
     if (_isLoading) {
@@ -291,7 +320,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
                       height: 35,
                       child: Row(
                         children: [
-                          // Add column visibility button
+                          // Column visibility button
                           ElevatedButton.icon(
                             onPressed: _showColumnVisibilityDialog,
                             icon: const Icon(
@@ -307,7 +336,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          // Existing export button
+                          // Export button
                           ElevatedButton.icon(
                             onPressed: _exportToExcel,
                             icon: const Icon(
@@ -397,7 +426,45 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
                                                 .columnName]
                                             ?.toString() ??
                                         '';
-                                    _copyCellContent(cellValue);
+
+                                    // Add to clipboard collection instead of replacing
+                                    final tableDataSource =
+                                        _dataSource as TableDataSource;
+                                    tableDataSource.addToClipboard(cellValue);
+                                    final allValues =
+                                        tableDataSource
+                                            .getSelectedCellsAsText();
+                                    Clipboard.setData(
+                                      ClipboardData(text: allValues),
+                                    );
+                                    _copyCellContent(
+                                      'تم إضافة إلى الحافظة (${tableDataSource.clipboardValuesCount} عنصر)',
+                                    );
+                                  }
+                                }
+                              },
+                              onCellDoubleTap: (details) {
+                                // Skip action column
+                                if (details.column.columnName != 'actions') {
+                                  final rowIndex =
+                                      details.rowColumnIndex.rowIndex - 1;
+                                  if (rowIndex >= 0 &&
+                                      rowIndex < _tableData.length) {
+                                    final cellValue =
+                                        _tableData[rowIndex][details
+                                                .column
+                                                .columnName]
+                                            ?.toString() ??
+                                        '';
+
+                                    // Clear clipboard and copy only this cell
+                                    final tableDataSource =
+                                        _dataSource as TableDataSource;
+                                    tableDataSource.clearSelection();
+                                    Clipboard.setData(
+                                      ClipboardData(text: cellValue),
+                                    );
+                                    _copyCellContent('تم نسخ: $cellValue');
                                   }
                                 }
                               },
@@ -459,7 +526,11 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     final visibleColumns =
         _columns
             .where(
-              (column) => !column.endsWith('_highlighted') && column != 'id',
+              (column) =>
+                  !column.endsWith('_highlighted') &&
+                  column != 'id' &&
+                  column !=
+                      'Prom_Reason', // Exclude Prom_Reason from column visibility options
             )
             .toList();
 
@@ -543,26 +614,6 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     );
   }
 
-  // Add method to refresh data source with current column visibility
-  void _refreshDataSource() {
-    final visibleColumns =
-        _columns
-            .where(
-              (column) =>
-                  column != 'id' &&
-                  !column.endsWith('_highlighted') &&
-                  !_hiddenColumns.contains(column),
-            )
-            .toList();
-
-    _dataSource = TableDataSource(
-      _tableData,
-      visibleColumns,
-      _arabicColumnNames,
-      onDeleteRecord: _deleteRecord,
-    );
-  }
-
   // Update the _buildGridColumns method to respect hidden columns
   List<GridColumn> _buildGridColumns() {
     final columns =
@@ -571,8 +622,10 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
               (column) =>
                   !column.endsWith('_highlighted') &&
                   column != 'id' &&
+                  column !=
+                      'Prom_Reason' && // Exclude Prom_Reason from grid columns
                   !_hiddenColumns.contains(column),
-            ) // Exclude metadata columns, id column, and hidden columns
+            )
             .map((column) {
               return GridColumn(
                 columnName: column,
@@ -623,9 +676,8 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
   // Update the _loadTableData method to call _refreshDataSource
 
   void _copyCellContent(String content) {
-    Clipboard.setData(ClipboardData(text: content));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('تم النسخ'), duration: const Duration(seconds: 2)),
+      SnackBar(content: Text(content), duration: const Duration(seconds: 2)),
     );
   }
 }

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Add this import for clipboard functionality
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hr/core/app_colors.dart';
 import 'package:hr/utils/excel_exporter.dart';
+import 'package:hr/widgets/column_visibility_dialog.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
@@ -125,7 +126,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
         setState(() {
           _latestData = simpleData;
           _isLoading = false;
-          _dataSource = _LatestDataSource(simpleData, _columns);
+          _refreshDataSource();
         });
         return;
       }
@@ -133,7 +134,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
       setState(() {
         _latestData = data;
         _isLoading = false;
-        _dataSource = _LatestDataSource(data, _columns);
+        _refreshDataSource();
       });
     } catch (e) {
       print("Error loading data: $e");
@@ -148,7 +149,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
           setState(() {
             _latestData = allData;
             _isLoading = false;
-            _dataSource = _LatestDataSource(allData, _columns);
+            _refreshDataSource();
           });
           return;
         }
@@ -186,100 +187,68 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
 
   // Method to copy cell content to clipboard
   void _copyCellContent(String content) {
-    Clipboard.setData(ClipboardData(text: content));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('تم النسخ'), duration: const Duration(seconds: 2)),
+      SnackBar(content: Text(content), duration: const Duration(seconds: 2)),
     );
   }
 
   void _refreshDataSource() {
     final visibleColumns =
-        _columns.where((column) => !_hiddenColumns.contains(column)).toList();
+        _columns
+            .where(
+              (column) =>
+                  column !=
+                      'Prom_Reason' && // Exclude Prom_Reason from latest data view
+                  !_hiddenColumns.contains(column),
+            )
+            .toList();
 
-    _dataSource = _LatestDataSource(_latestData, visibleColumns);
+    _dataSource = _LatestDataSource(
+      _latestData,
+      visibleColumns,
+      onCellSelected: _onCellSelected,
+      onCopyCellContent: _copyCellContent,
+    );
     setState(() {}); // Trigger rebuild
   }
 
-  void _showColumnVisibilityDialog() {
-    // Include all columns including 'id' in the dialog
-    final visibleColumns = _columns.toList();
+  void _onCellSelected(String cellValue) {
+    setState(() {}); // Refresh to show selection changes
+  }
 
+  void _copySelectedCells() {
+    final latestDataSource = _dataSource as _LatestDataSource;
+    final selectedText = latestDataSource.getSelectedCellsAsText();
+
+    if (selectedText.isNotEmpty) {
+      Clipboard.setData(ClipboardData(text: selectedText));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('تم نسخ ${latestDataSource.selectedCellsCount} عنصر'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _clearSelection() {
+    final latestDataSource = _dataSource as _LatestDataSource;
+    latestDataSource.clearSelection();
+    setState(() {});
+  }
+
+  void _showColumnVisibilityDialog() {
     showDialog(
       context: context,
       builder:
-          (context) => StatefulBuilder(
-            builder:
-                (context, setDialogState) => AlertDialog(
-                  title: const Text('إظهار/إخفاء الأعمدة'),
-                  content: SizedBox(
-                    width: double.maxFinite.clamp(0, 800),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Add "Select All" checkbox
-                        CheckboxListTile(
-                          title: const Text('تحديد الكل'),
-                          value: _hiddenColumns.isEmpty,
-                          onChanged: (bool? value) {
-                            setDialogState(() {
-                              setState(() {
-                                if (value == true) {
-                                  // Show all columns
-                                  _hiddenColumns.clear();
-                                } else {
-                                  // Hide all columns
-                                  _hiddenColumns.addAll(visibleColumns);
-                                }
-                              });
-                            });
-
-                            // Refresh the data source
-                            _refreshDataSource();
-                          },
-                        ),
-                        const Divider(),
-                        // List of columns
-                        Expanded(
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: visibleColumns.length,
-                            itemBuilder: (context, index) {
-                              final column = visibleColumns[index];
-                              final displayName =
-                                  _columnNames[column] ?? column;
-
-                              return CheckboxListTile(
-                                title: Text(displayName),
-                                value: !_hiddenColumns.contains(column),
-                                onChanged: (bool? value) {
-                                  // Update both the dialog state and the widget state
-                                  setDialogState(() {
-                                    setState(() {
-                                      if (value == false) {
-                                        _hiddenColumns.add(column);
-                                      } else {
-                                        _hiddenColumns.remove(column);
-                                      }
-                                    });
-                                  });
-
-                                  // Refresh the data source with updated column visibility
-                                  _refreshDataSource();
-                                },
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('إغلاق'),
-                    ),
-                  ],
-                ),
+          (context) => ColumnVisibilityDialog(
+            columns:
+                _columns
+                    .where((column) => column != 'Prom_Reason')
+                    .toList(), // Exclude Prom_Reason
+            columnNames: _columnNames,
+            hiddenColumns: _hiddenColumns,
+            onVisibilityChanged: _refreshDataSource,
           ),
     );
   }
@@ -305,7 +274,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Add export button and title
+            // Header without copy/clear buttons
             SizedBox(
               height: 40,
               child: Stack(
@@ -319,7 +288,7 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
                         height: 35,
                         child: Row(
                           children: [
-                            // Add column visibility button
+                            // Column visibility button
                             ElevatedButton.icon(
                               onPressed: _showColumnVisibilityDialog,
                               icon: const Icon(
@@ -403,31 +372,36 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
                             _latestData[rowIndex][details.column.columnName]
                                 ?.toString() ??
                             '';
-                        _copyCellContent(cellValue);
+
+                        // Add to clipboard collection instead of replacing
+                        final latestDataSource =
+                            _dataSource as _LatestDataSource;
+                        latestDataSource.addToClipboard(cellValue);
+                        final allValues =
+                            latestDataSource.getSelectedCellsAsText();
+                        Clipboard.setData(ClipboardData(text: allValues));
+                        _copyCellContent(
+                          'تم إضافة إلى الحافظة (${latestDataSource.clipboardValuesCount} عنصر)',
+                        );
                       }
                     },
-                    columns:
-                        _columns
-                            .where((column) => !_hiddenColumns.contains(column))
-                            .map(
-                              (column) => GridColumn(
-                                columnName: column,
-                                label: Container(
-                                  padding: const EdgeInsets.all(8.0),
-                                  alignment: Alignment.center,
-                                  child: Text(
-                                    column,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                      fontSize: 14,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ),
-                            )
-                            .toList(),
+                    onCellDoubleTap: (details) {
+                      final rowIndex = details.rowColumnIndex.rowIndex - 1;
+                      if (rowIndex >= 0 && rowIndex < _latestData.length) {
+                        final cellValue =
+                            _latestData[rowIndex][details.column.columnName]
+                                ?.toString() ??
+                            '';
+
+                        // Clear clipboard and copy only this cell
+                        final latestDataSource =
+                            _dataSource as _LatestDataSource;
+                        latestDataSource.clearSelection();
+                        Clipboard.setData(ClipboardData(text: cellValue));
+                        _copyCellContent('تم نسخ: $cellValue');
+                      }
+                    },
+                    columns: _buildGridColumns(),
                   ),
                 ),
               ),
@@ -437,14 +411,51 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
       ),
     );
   }
+
+  List<GridColumn> _buildGridColumns() {
+    return _columns
+        .where(
+          (column) =>
+              column !=
+                  'Prom_Reason' && // Exclude Prom_Reason from grid display
+              !_hiddenColumns.contains(column),
+        )
+        .map(
+          (column) => GridColumn(
+            columnName: column,
+            label: Container(
+              padding: const EdgeInsets.all(8.0),
+              alignment: Alignment.center,
+              child: Text(
+                column,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        )
+        .toList();
+  }
 }
 
 class _LatestDataSource extends DataGridSource {
   final List<Map<String, dynamic>> _data;
   final List<String> _columns;
+  final Set<String> _clipboardValues = <String>{};
+  final Function(String)? onCellSelected;
+  final Function(String)? onCopyCellContent;
   List<DataGridRow> _dataGridRows = [];
 
-  _LatestDataSource(this._data, this._columns) {
+  _LatestDataSource(
+    this._data,
+    this._columns, {
+    this.onCellSelected,
+    this.onCopyCellContent,
+  }) {
     _dataGridRows =
         _data
             .map<DataGridRow>(
@@ -466,19 +477,58 @@ class _LatestDataSource extends DataGridSource {
   @override
   List<DataGridRow> get rows => _dataGridRows;
 
+  void clearSelection() {
+    _clipboardValues.clear();
+  }
+
+  String getSelectedCellsAsText() {
+    return _clipboardValues.join('\n');
+  }
+
+  int get selectedCellsCount => _clipboardValues.length;
+
+  // Add public getter for clipboard values count
+  int get clipboardValuesCount => _clipboardValues.length;
+
+  // Add public method to add to clipboard
+  void addToClipboard(String value) {
+    _clipboardValues.add(value);
+  }
+
   @override
   DataGridRowAdapter buildRow(DataGridRow row) {
+    final rowIndex = rows.indexOf(row);
+
     return DataGridRowAdapter(
-      color: rows.indexOf(row) % 2 == 0 ? Colors.white : Colors.blue.shade50,
+      color: rowIndex % 2 == 0 ? Colors.white : Colors.blue.shade50,
       cells:
           row.getCells().map<Widget>((dataGridCell) {
-            return Container(
-              alignment: Alignment.center,
-              padding: const EdgeInsets.all(8.0),
-              child: Text(
-                dataGridCell.value.toString(),
-                style: const TextStyle(fontSize: 16),
-                overflow: TextOverflow.ellipsis,
+            return GestureDetector(
+              onSecondaryTap: () {
+                // Right click: add this cell value to clipboard collection
+                final cellValue = dataGridCell.value.toString();
+                _clipboardValues.add(cellValue);
+                final allValues = _clipboardValues.join('\n');
+                Clipboard.setData(ClipboardData(text: allValues));
+                onCopyCellContent?.call(
+                  'تم إضافة إلى الحافظة (${_clipboardValues.length} عنصر)',
+                );
+              },
+              onDoubleTap: () {
+                // Double click: clear clipboard and copy only this cell
+                _clipboardValues.clear();
+                final cellValue = dataGridCell.value.toString();
+                Clipboard.setData(ClipboardData(text: cellValue));
+                onCopyCellContent?.call('تم نسخ: $cellValue');
+              },
+              child: Container(
+                alignment: Alignment.center,
+                padding: const EdgeInsets.all(8.0),
+                child: Text(
+                  dataGridCell.value.toString(),
+                  style: const TextStyle(fontSize: 16),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             );
           }).toList(),
