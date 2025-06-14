@@ -42,6 +42,12 @@ class ConfigSheetService {
       // Check for duplicate headers
       final uniqueHeaders = headers.toSet();
       if (uniqueHeaders.length != headers.length) {
+        final duplicates =
+            headers
+                .where((h) => headers.where((x) => x == h).length > 1)
+                .toSet();
+
+        print('Duplicate headers: $duplicates');
         return 'خطأ: يوجد عناوين مكررة في sheet "$sheetName"';
       }
 
@@ -93,7 +99,8 @@ class ConfigSheetService {
         for (int j = 0; j < headers.length && j < row.length; j++) {
           final cell = row[j];
           final value = cell?.value?.toString() ?? '';
-          values[headers[j]] = value;
+          // Use sanitized header names for insertion
+          values[_sanitizeColumnName(headers[j])] = value;
         }
 
         values['upload_date'] = now;
@@ -105,13 +112,36 @@ class ConfigSheetService {
 
       return 'تم إضافة بيانات "$sheetName" بنجاح';
     } catch (e) {
+      print('Error processing config sheet: ${e.toString()}');
       return 'خطأ في معالجة الملف: ${e.toString()}';
     }
   }
 
+  // Add a new method to sanitize column names for use as keys in the values map
+  String _sanitizeColumnName(String name) {
+    String sanitized = name
+        .replaceAll(' ', '_') // Replace spaces with underscores
+        .replaceAll('.', '_') // Replace dots with underscores
+        .replaceAll('-', '_') // Replace hyphens with underscores
+        .replaceAll('(', '_') // Replace opening parentheses with underscores
+        .replaceAll(')', '_') // Replace closing parentheses with underscores
+        .replaceAll('/', '_') // Replace slashes with underscores
+        .replaceAll('\\', '_') // Replace backslashes with underscores
+        .replaceAll(':', '_'); // Replace colons with underscores
+
+    // Ensure name doesn't start with a number (SQLite limitation)
+    if (RegExp(r'^[0-9]').hasMatch(sanitized)) {
+      sanitized = 'col_$sanitized';
+    }
+
+    return sanitized;
+  }
+
   String _escapeColumnName(String name) {
-    // Sanitize column name for SQLite
-    final sanitized = name.replaceAll('"', '""');
+    // First sanitize the name to create a valid SQLite identifier
+    String sanitized = _sanitizeColumnName(name);
+
+    // Then wrap in quotes for use in SQL statements
     return '"$sanitized"';
   }
 }

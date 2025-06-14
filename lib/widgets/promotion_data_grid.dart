@@ -62,9 +62,7 @@ class PromotionDataGrid extends StatelessWidget {
           children: [
             SfDataGrid(
               source: dataSource,
-              columnWidthMode:
-                  ColumnWidthMode
-                      .auto, // Changed to auto for better width calculation
+              columnWidthMode: ColumnWidthMode.fill, // Changed to fill
               columnWidthCalculationRange: ColumnWidthCalculationRange.allRows,
               allowSorting: true,
               allowFiltering: true,
@@ -74,8 +72,8 @@ class PromotionDataGrid extends StatelessWidget {
               isScrollbarAlwaysShown: true,
               gridLinesVisibility: GridLinesVisibility.both,
               headerGridLinesVisibility: GridLinesVisibility.both,
-              rowHeight: 60, // Increased row height to accommodate content
-              headerRowHeight: 65, // Increased header height
+              rowHeight: 60,
+              headerRowHeight: 65,
               onCellSecondaryTap: (details) {
                 if (details.column.columnName != 'actions') {
                   final rowIndex = details.rowColumnIndex.rowIndex - 1;
@@ -122,54 +120,14 @@ class PromotionDataGrid extends StatelessWidget {
   List<GridColumn> _buildGridColumns() {
     final visibleColumns =
         columns.where((col) => !hiddenColumns.contains(col)).map((column) {
-          // Set minimum widths based on column content type
-          double minWidth = 120.0; // Default minimum width
-
-          switch (column) {
-            case 'Badge_NO':
-              minWidth = 100.0;
-              break;
-            case 'Employee_Name':
-              minWidth = 200.0;
-              break;
-            case 'Bus_Line':
-            case 'Depart_Text':
-            case 'Position_Text':
-              minWidth = 180.0;
-              break;
-            case 'Status':
-              minWidth = 120.0;
-              break;
-            case 'Adjusted_Eligible_Date':
-              minWidth = 180.0;
-              break;
-            case 'Prom_Reason':
-              minWidth = 200.0;
-              break;
-            case 'Last_Promotion_Dt':
-              minWidth = 140.0;
-              break;
-            case 'Basic':
-            case 'New_Basic':
-            case 'Annual_Increment':
-              minWidth = 140.0;
-              break;
-            case 'Grade':
-            case 'Next_Grade':
-              minWidth = 100.0;
-              break;
-            case '4% Adj':
-              minWidth = 120.0;
-              break;
-            case 'Grade_Range':
-            case 'Promotion_Band':
-              minWidth = 160.0;
-              break;
-          }
+          double minWidth = _getColumnWidth(
+            column,
+          ); // Add back minimum width calculation
 
           return GridColumn(
             columnName: column,
-            minimumWidth: minWidth,
+            columnWidthMode: ColumnWidthMode.auto,
+            minimumWidth: minWidth, // Restore minimum width
             autoFitPadding: const EdgeInsets.symmetric(horizontal: 16.0),
             label: Container(
               padding: const EdgeInsets.all(8.0),
@@ -188,9 +146,8 @@ class PromotionDataGrid extends StatelessWidget {
           );
         }).toList();
 
-    // Add action columns
+    // Add action columns with fixed widths
     if (visibleColumns.isNotEmpty) {
-      // Add promote column
       visibleColumns.add(
         GridColumn(
           columnName: 'promote',
@@ -212,7 +169,6 @@ class PromotionDataGrid extends StatelessWidget {
         ),
       );
 
-      // Add remove column
       visibleColumns.add(
         GridColumn(
           columnName: 'actions',
@@ -236,6 +192,42 @@ class PromotionDataGrid extends StatelessWidget {
     }
 
     return visibleColumns;
+  }
+
+  // Add back the width calculation method
+  double _getColumnWidth(String column) {
+    switch (column) {
+      case 'Badge_NO':
+        return 120;
+      case 'Employee_Name':
+        return 200;
+      case 'Bus_Line':
+      case 'Depart_Text':
+      case 'Position_Text':
+      case 'Basic':
+        return 180.0;
+      case 'Status':
+      case 'Grade':
+        return 100.0;
+      case 'Adjusted_Eligible_Date':
+      case 'Last_Promotion_Dt':
+        return 150.0;
+
+      case 'New_Basic':
+        return 120.0;
+      case 'Next_Grade':
+        return 100.0;
+      case '4% Adj':
+      case 'Annual_Increment':
+        return 130.0;
+      case 'Grade_Range':
+      case 'Promotion_Band':
+        return 140.0;
+      case 'Prom_Reason':
+        return 200.0;
+      default:
+        return 120.0;
+    }
   }
 
   Widget _buildLoadingIndicator() {

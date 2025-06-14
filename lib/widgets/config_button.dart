@@ -24,21 +24,26 @@ class ConfigButton extends StatelessWidget {
       children: [
         ElevatedButton(
           style: ElevatedButton.styleFrom(
+            minimumSize: Size(0, 0),
+            padding: EdgeInsets.symmetric(horizontal: 16.w.clamp(0, 20)),
             backgroundColor: AppColors.primaryColor.withAlpha(200),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(8),
             ),
           ),
           onPressed: isLoading ? null : onPressed,
           child: SizedBox(
-            height: 50.h.clamp(20, 60),
-            width: 150.w.clamp(120, 180),
+            height: 30.h.clamp(0, 40),
+            width: 140.w.clamp(0, 160),
             child: Center(
               child: Text(
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white, fontSize: 16),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13.sp.clamp(11, 15),
+                ),
               ),
             ),
           ),
@@ -48,8 +53,8 @@ class ConfigButton extends StatelessWidget {
             right: 8,
             top: 8,
             child: Container(
-              width: 20.w.clamp(18, 22),
-              height: 20.w.clamp(18, 22),
+              width: 15.w.clamp(12, 18),
+              height: 15.w.clamp(12, 18),
               decoration: const BoxDecoration(
                 color: Colors.white54,
                 shape: BoxShape.circle,
@@ -57,7 +62,7 @@ class ConfigButton extends StatelessWidget {
               child: Icon(
                 Icons.check,
                 color: AppColors.primaryColor.withAlpha(250),
-                size: 16.w.clamp(14, 18),
+                size: 16.w.clamp(7, 9),
               ),
             ),
           ),

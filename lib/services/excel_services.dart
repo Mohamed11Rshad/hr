@@ -84,7 +84,6 @@ class ExcelService {
     List<List<Data?>> rows,
     List<String> headers,
   ) async {
-    final batch = db.batch();
     int insertedCount = 0;
     final existingRecords = await _getExistingRecords(tableName);
 
@@ -118,63 +117,86 @@ class ExcelService {
       }
     }
 
-    for (int i = 1; i < rows.length; i++) {
-      final values = <String, dynamic>{'upload_date': formattedDate};
-      bool hasData = false;
-      String? badgeNo;
+    // Process data in chunks to prevent UI blocking
+    const int chunkSize = 500; // Process 500 rows at a time
+    final totalRows = rows.length - 1; // Exclude header row
 
-      // Build record from row
-      for (int j = 0; j < headers.length && j < rows[i].length; j++) {
-        final value = rows[i][j]?.value?.toString();
-        if (value != null) {
-          final columnName = _escapeColumnName(headers[j]).replaceAll('"', '');
-          values[columnName] = value;
-          hasData = true;
+    for (
+      int startIndex = 1;
+      startIndex < rows.length;
+      startIndex += chunkSize
+    ) {
+      final endIndex = (startIndex + chunkSize).clamp(0, rows.length);
+      final batch = db.batch();
 
-          // Store Badge NO for comparison
-          if (j == badgeNoIndex) {
-            badgeNo = value;
+      for (int i = startIndex; i < endIndex; i++) {
+        final values = <String, dynamic>{'upload_date': formattedDate};
+        bool hasData = false;
+        String? badgeNo;
+
+        // Build record from row
+        for (int j = 0; j < headers.length && j < rows[i].length; j++) {
+          final value = rows[i][j]?.value?.toString();
+          if (value != null) {
+            final columnName = _escapeColumnName(
+              headers[j],
+            ).replaceAll('"', '');
+            values[columnName] = value;
+            hasData = true;
+
+            // Store Badge NO for comparison
+            if (j == badgeNoIndex) {
+              badgeNo = value;
+            }
           }
         }
-      }
 
-      if (hasData) {
-        bool shouldInsert = true;
+        if (hasData) {
+          bool shouldInsert = true;
 
-        // Check if this record is a duplicate based on Badge NO and other fields
-        if (badgeNo != null &&
-            badgeNoColumnSanitized != null &&
-            existingByBadgeNo.containsKey(badgeNo)) {
-          final recordsWithSameBadgeNo = existingByBadgeNo[badgeNo]!;
+          // Check if this record is a duplicate based on Badge NO and other fields
+          if (badgeNo != null &&
+              badgeNoColumnSanitized != null &&
+              existingByBadgeNo.containsKey(badgeNo)) {
+            final recordsWithSameBadgeNo = existingByBadgeNo[badgeNo]!;
 
-          for (final existingRecord in recordsWithSameBadgeNo) {
-            bool isDuplicate = true;
+            for (final existingRecord in recordsWithSameBadgeNo) {
+              bool isDuplicate = true;
 
-            // Compare only the columns that exist in the new record
-            for (final key in values.keys) {
-              if (key == 'upload_date' || key == 'id') continue;
+              // Compare only the columns that exist in the new record
+              for (final key in values.keys) {
+                if (key == 'upload_date' || key == 'id') continue;
 
-              if (values[key]?.toString() != existingRecord[key]?.toString()) {
-                isDuplicate = false;
+                if (values[key]?.toString() !=
+                    existingRecord[key]?.toString()) {
+                  isDuplicate = false;
+                  break;
+                }
+              }
+
+              if (isDuplicate) {
+                shouldInsert = false;
                 break;
               }
             }
+          }
 
-            if (isDuplicate) {
-              shouldInsert = false;
-              break;
-            }
+          if (shouldInsert) {
+            batch.insert(tableName, values);
+            insertedCount++;
           }
         }
+      }
 
-        if (shouldInsert) {
-          batch.insert(tableName, values);
-          insertedCount++;
-        }
+      // Commit this batch
+      await batch.commit(noResult: true);
+
+      // Add a small delay between chunks to allow UI updates
+      if (endIndex < rows.length) {
+        await Future.delayed(const Duration(milliseconds: 50));
       }
     }
 
-    await batch.commit(noResult: true);
     return insertedCount;
   }
 

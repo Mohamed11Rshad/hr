@@ -13,6 +13,7 @@ import 'package:hr/promotions_screen.dart';
 import 'package:hr/view_data_screen.dart';
 import 'package:hr/view_latest_data_screen.dart';
 import 'package:hr/promoted_screen.dart';
+import 'package:hr/transfers_screen.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class AddDataScreen extends StatefulWidget {
@@ -30,6 +31,7 @@ class _AddDataScreenState extends State<AddDataScreen> {
   bool _annualIncreaseAExists = false;
   bool _annualIncreaseBExists = false;
   bool _statusExists = false;
+  bool _staffAssignmentsExists = false; // Add new property
   final FilePickerService _filePicker = FilePickerService();
   late ConfigSheetService _configSheetService;
   Database? _db;
@@ -77,6 +79,7 @@ class _AddDataScreenState extends State<AddDataScreen> {
       'عرض أحدث البيانات',
       'الترقيات',
       'تم ترقيتهم',
+      'التنقلات',
     ];
     return AppBar(
       backgroundColor: AppColors.primaryColor,
@@ -108,6 +111,8 @@ class _AddDataScreenState extends State<AddDataScreen> {
           _buildDrawerItem(3, 'الترقيات', _canAccessPromotions()),
           const SizedBox(height: 12),
           _buildDrawerItem(4, 'تم ترقيتهم', true),
+          const SizedBox(height: 12),
+          _buildDrawerItem(5, 'التنقلات', _staffAssignmentsExists),
         ],
       ),
     );
@@ -126,7 +131,7 @@ class _AddDataScreenState extends State<AddDataScreen> {
           _onItemTapped(index);
           Navigator.pop(context);
         } else {
-          _showPromotionsAccessMessage();
+          _showAccessMessage(index);
           Navigator.pop(context);
         }
       },
@@ -141,14 +146,18 @@ class _AddDataScreenState extends State<AddDataScreen> {
         _statusExists;
   }
 
-  void _showPromotionsAccessMessage() {
+  void _showAccessMessage(int index) {
+    String message = '';
+    if (index == 3) {
+      message =
+          'يجب رفع جميع شيتات حساب الزيادة وشيت الحالة أولاً قبل الوصول إلى شاشة الترقيات';
+    } else if (index == 5) {
+      message =
+          'يجب رفع شيت Staff Assignments أولاً قبل الوصول إلى شاشة التنقلات';
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'يجب رفع جميع شيتات حساب الزيادة وشيت الحالة أولاً قبل الوصول إلى شاشة الترقيات',
-        ),
-        duration: Duration(seconds: 3),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
     );
   }
 
@@ -164,6 +173,8 @@ class _AddDataScreenState extends State<AddDataScreen> {
         return PromotionsScreen(db: _db, tableName: "Base_Sheet");
       case 4:
         return PromotedScreen(db: _db, tableName: "Base_Sheet");
+      case 5:
+        return TransfersScreen(db: _db, tableName: "Base_Sheet");
       default:
         return _buildAddDataScreen();
     }
@@ -181,6 +192,8 @@ class _AddDataScreenState extends State<AddDataScreen> {
           annualIncreaseAExists: _annualIncreaseAExists,
           annualIncreaseBExists: _annualIncreaseBExists,
           statusExists: _statusExists,
+          staffAssignmentsExists:
+              _staffAssignmentsExists, // Add staff assignments status
           onMainUpload: _processExcelFile,
           onConfigUpload: _processConfigSheet,
         ),
@@ -199,15 +212,26 @@ class _AddDataScreenState extends State<AddDataScreen> {
 
     setState(() {
       _isLoading = true;
-      _status = 'جاري تحميل ملف Excel...';
+      _status = 'جاري اختيار الملف...';
     });
 
     try {
       final file = await _filePicker.pickExcelFile();
       if (file != null) {
-        setState(() => _status = 'جاري معالجة الملف...');
+        // Show file selected and start processing
+        setState(() => _status = 'تم اختيار الملف، جاري التحليل...');
+
+        // Add a small delay to allow UI to update
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        // Process file in chunks to prevent UI blocking
         final excelService = ExcelService(_db!);
-        final result = await excelService.processExcelFile(file);
+
+        // Update status during processing
+        setState(() => _status = 'جاري قراءة الملف وتحليل البيانات...');
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final result = await _processFileWithProgress(excelService, file);
 
         setState(() => _status = result);
         await _updateLatestTable();
@@ -227,11 +251,35 @@ class _AddDataScreenState extends State<AddDataScreen> {
           setState(() => _status = 'خطأ: يوجد أعمدة مكررة في الملف');
         }
       } else {
+        debugPrint('Error processing file: $e');
         setState(() => _status = 'خطأ في معالجة الملف: ${e.toString()}');
       }
     } finally {
       setState(() => _isLoading = false);
     }
+  }
+
+  Future<String> _processFileWithProgress(
+    ExcelService excelService,
+    File file,
+  ) async {
+    // Break the processing into steps with UI updates
+    setState(() => _status = 'جاري تحليل هيكل الملف...');
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    setState(() => _status = 'جاري إنشاء قاعدة البيانات...');
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    setState(() => _status = 'جاري إدراج البيانات... قد يستغرق هذا بعض الوقت');
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Process the file
+    final result = await excelService.processExcelFile(file);
+
+    setState(() => _status = 'جاري إنهاء العملية...');
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    return result;
   }
 
   List<String> _findDuplicatedColumns(File? file) {
@@ -296,6 +344,7 @@ class _AddDataScreenState extends State<AddDataScreen> {
         setState(() => _status = 'لم يتم اختيار ملف');
       }
     } catch (e) {
+      debugPrint('Error processing config sheet: $e');
       setState(() => _status = 'خطأ في معالجة الملف: ${e.toString()}');
     } finally {
       setState(() => _isLoading = false);
@@ -313,6 +362,9 @@ class _AddDataScreenState extends State<AddDataScreen> {
       _annualIncreaseAExists = tables.contains('Annual_Increase_A');
       _annualIncreaseBExists = tables.contains('Annual_Increase_B');
       _statusExists = tables.contains('Status');
+      _staffAssignmentsExists = tables.contains(
+        'Staff_Assignments',
+      ); // Check for Staff Assignments table
     });
   }
 
