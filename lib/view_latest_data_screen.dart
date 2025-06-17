@@ -324,17 +324,6 @@ class _ViewLatestDataScreenState extends State<ViewLatestDataScreen> {
                       ),
                     ),
                   ),
-                  Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      '${widget.tableName}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18.sp.clamp(16, 22),
-                        color: AppColors.primaryColor,
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),

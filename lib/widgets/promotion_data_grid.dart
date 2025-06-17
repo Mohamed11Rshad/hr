@@ -468,7 +468,10 @@ class _PromotionDataSource extends DataGridSource {
               alignment: Alignment.center,
               padding: const EdgeInsets.all(8.0),
               child: Text(
-                dataGridCell.value.toString(),
+                _formatDisplayValue(
+                  dataGridCell.columnName,
+                  dataGridCell.value.toString(),
+                ),
                 style: const TextStyle(fontSize: 14),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -554,6 +557,27 @@ class _PromotionDataSource extends DataGridSource {
 
     // Simply call the callback - let the parent handle the date picker
     onUpdateAdjustedDate!(badgeNo, currentDate);
+  }
+
+  String _formatDisplayValue(String columnName, String value) {
+    // List of numeric columns that should be displayed as integers
+    const numericColumns = [
+      'Basic',
+      'New_Basic',
+      '4% Adj',
+      'Annual_Increment',
+      'Grade',
+      'Next_Grade',
+      'Badge_NO',
+    ];
+
+    if (numericColumns.contains(columnName) && value.isNotEmpty) {
+      final doubleValue = double.tryParse(value);
+      if (doubleValue != null) {
+        return doubleValue.round().toString();
+      }
+    }
+    return value;
   }
 
   void _showPromReasonEditor(

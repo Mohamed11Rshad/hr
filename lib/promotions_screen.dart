@@ -88,7 +88,6 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
   Future<void> _loadData() async {
     try {
       final allColumns = await _dataService.getAvailableColumns();
-      print('Available columns: $allColumns'); // Debug print
 
       _columns =
           PromotionConstants.requiredColumns
@@ -108,9 +107,7 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
                 .toList();
       }
 
-      // Ensure Status column is included (it's added dynamically)
       if (!_columns.contains('Status')) {
-        // Insert Status after Department and before Grade
         final gradeIndex = _columns.indexOf('Grade');
         if (gradeIndex != -1) {
           _columns.insert(gradeIndex, 'Status');
@@ -119,24 +116,15 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
         }
       }
 
-      // Ensure Prom_Reason column is included in the right position
       if (!_columns.contains('Prom_Reason')) {
-        // Insert before Last_Promotion_Dt
         final lastPromotionIndex = _columns.indexOf('Last_Promotion_Dt');
         if (lastPromotionIndex != -1) {
           _columns.insert(lastPromotionIndex, 'Prom_Reason');
         } else {
-          // If Last_Promotion_Dt doesn't exist, add after Promotion_Band
-          final promotionBandIndex = _columns.indexOf('Promotion_Band');
-          if (promotionBandIndex != -1) {
-            _columns.insert(promotionBandIndex + 1, 'Prom_Reason');
-          } else {
-            _columns.add('Prom_Reason');
-          }
+          _columns.add('Prom_Reason');
         }
       }
 
-      // Ensure calculated columns are included
       final calculatedColumns = [
         'Next_Grade',
         '4% Adj',
@@ -149,13 +137,10 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
         }
       }
 
-      print('Selected columns: $_columns'); // Debug print
-
       _currentPage = 0;
       _hasMoreData = true;
       await _loadMoreData();
     } catch (e) {
-      print('Error in _loadData: $e'); // Debug print
       setState(() {
         _isLoading = false;
         _errorMessage = 'خطأ في تحميل البيانات: ${e.toString()}';
@@ -204,7 +189,7 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final duplicates = await _dataService.addEmployeesToPromotions(
+      final errorsAndDuplicates = await _dataService.addEmployeesToPromotions(
         badgeNumbers,
       );
 
@@ -217,42 +202,80 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
               .where((badge) => !foundEmployees.contains(badge))
               .toList();
 
+      // Separate validation errors from duplicates
+      final validationErrors =
+          errorsAndDuplicates
+              .where(
+                (error) =>
+                    error.contains('Old Basic') || error.contains('Grade'),
+              )
+              .toList();
+      final duplicates =
+          errorsAndDuplicates
+              .where(
+                (error) =>
+                    !error.contains('Old Basic') && !error.contains('Grade'),
+              )
+              .where((badge) => foundEmployees.contains(badge))
+              .toList();
+
       // Reload data
       _currentPage = 0;
       _hasMoreData = true;
       _promotionsData.clear();
       await _loadMoreData();
 
+      // Calculate successfully added count
+      final totalRequestedValid = foundEmployees.length;
+      final totalErrors = duplicates.length + validationErrors.length;
+      final addedCount = totalRequestedValid - totalErrors;
+
       // Show detailed result message
       String message = '';
-      final addedCount = foundEmployees.length - duplicates.length;
 
       if (addedCount > 0) {
         message += 'تم إضافة $addedCount موظف بنجاح';
       }
 
       if (duplicates.isNotEmpty) {
-        if (message.isNotEmpty) message += '\n';
+        if (message.isNotEmpty) message += '\n\n';
         message +=
-            'الأرقام التالية موجودة مسبقاً في قائمة الترقيات: ${duplicates.join(', ')}';
+            'الأرقام التالية موجودة مسبقاً في قائمة الترقيات:\n${duplicates.join('\n')}';
+      }
+
+      if (validationErrors.isNotEmpty) {
+        if (message.isNotEmpty) message += '\n\n';
+        message += 'أخطاء في البيانات:\n${validationErrors.join('\n')}';
       }
 
       if (notFoundEmployees.isNotEmpty) {
-        if (message.isNotEmpty) message += '\n';
+        if (message.isNotEmpty) message += '\n\n';
         message +=
-            'الأرقام التالية غير موجودة في قاعدة البيانات: ${notFoundEmployees.join(', ')}';
+            'الأرقام التالية غير موجودة في قاعدة البيانات:\n${notFoundEmployees.join('\n')}';
       }
 
       if (message.isEmpty) {
         message = 'لم يتم إضافة أي موظف';
       }
 
+      // Show message with appropriate styling
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), duration: const Duration(seconds: 5)),
+        SnackBar(
+          content: SingleChildScrollView(
+            child: Text(message, style: const TextStyle(fontSize: 13)),
+          ),
+          duration: Duration(seconds: validationErrors.isNotEmpty ? 8 : 5),
+          backgroundColor: validationErrors.isNotEmpty ? Colors.red : null,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+        ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ في إضافة الموظفين: ${e.toString()}')),
+        SnackBar(
+          content: Text('خطأ في إضافة الموظفين: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
       );
     } finally {
       setState(() => _isLoading = false);
@@ -583,7 +606,7 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
           Icon(Icons.people_outline, size: 64, color: Colors.grey[400]),
           const SizedBox(height: 16),
           Text(
-            'لا توجد موظفين في قائمة الترقيات',
+            'لا يوجد موظفين في قائمة الترقيات',
             style: TextStyle(fontSize: 18, color: Colors.grey[600]),
           ),
           const SizedBox(height: 8),

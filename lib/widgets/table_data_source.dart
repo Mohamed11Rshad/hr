@@ -85,6 +85,16 @@ class TableDataSource extends DataGridSource {
   @override
   DataGridRowAdapter buildRow(DataGridRow row) {
     final rowIndex = rows.indexOf(row);
+
+    // Add safety check for valid data
+    if (rowIndex < 0 || rowIndex >= _data.length) {
+      // Return empty row adapter if data is out of bounds
+      return DataGridRowAdapter(
+        color: Colors.white,
+        cells: List.generate(_columns.length + 1, (index) => Container()),
+      );
+    }
+
     final record = _data[rowIndex];
 
     final cells =
@@ -132,7 +142,7 @@ class TableDataSource extends DataGridSource {
           );
         }).toList();
 
-    // Add delete button for actions column
+    // Add delete button for actions column - only if we have columns
     if (_columns.isNotEmpty) {
       cells.add(
         Container(

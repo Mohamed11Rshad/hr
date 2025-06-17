@@ -146,7 +146,9 @@ class TransfersDataService {
           mutableTransfer['Employee_Name'] = baseData['Employee_Name'] ?? '';
           mutableTransfer['Bus_Line'] = baseData['Bus_Line'] ?? '';
           mutableTransfer['Depart_Text'] = baseData['Depart_Text'] ?? '';
-          mutableTransfer['Grade'] = baseData['Grade'] ?? '';
+          mutableTransfer['Grade'] = _formatAsInteger(
+            baseData['Grade']?.toString() ?? '',
+          );
           mutableTransfer['Grade_Range'] = baseData['Grade_Range'] ?? '';
           mutableTransfer['Position_Text'] = baseData['Position_Text'] ?? '';
 
@@ -365,6 +367,20 @@ class TransfersDataService {
     } catch (e) {
       print('Error getting position from staff assignments: $e');
       return null;
+    }
+  }
+
+  String _formatAsInteger(String value) {
+    if (value.isEmpty) {
+      return '';
+    }
+
+    try {
+      final doubleValue = double.tryParse(value) ?? 0;
+      return doubleValue.round().toString();
+    } catch (e) {
+      print('Error formatting as integer: $e');
+      return value; // Return original value if parsing fails
     }
   }
 

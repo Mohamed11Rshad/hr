@@ -129,7 +129,10 @@ class TransfersDataSource extends DataGridSource {
       alignment: Alignment.center,
       padding: const EdgeInsets.all(8.0),
       child: Text(
-        dataGridCell.value.toString(),
+        _formatDisplayValue(
+          dataGridCell.columnName,
+          dataGridCell.value.toString(),
+        ),
         style: const TextStyle(fontSize: 14),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
@@ -214,6 +217,19 @@ class TransfersDataSource extends DataGridSource {
     if (result != null) {
       onUpdateField!(sNo, fieldName, result);
     }
+  }
+
+  String _formatDisplayValue(String columnName, String value) {
+    // List of numeric columns that should be displayed as integers
+    const numericColumns = ['S_NO', 'Badge_NO', 'Grade', 'Badge_Number'];
+
+    if (numericColumns.contains(columnName) && value.isNotEmpty) {
+      final doubleValue = double.tryParse(value);
+      if (doubleValue != null) {
+        return doubleValue.round().toString();
+      }
+    }
+    return value;
   }
 
   String _getFieldDisplayName(String fieldName) {

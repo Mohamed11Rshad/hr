@@ -82,7 +82,24 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     }
 
     try {
-      final tables = await DatabaseService.getAvailableTables(widget.db!);
+      if (!widget.db!.isOpen) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'قاعدة البيانات مغلقة - يرجى إعادة تشغيل التطبيق';
+        });
+        return;
+      }
+
+      await widget.db!.rawQuery('SELECT 1');
+
+      final allTables = await DatabaseService.getAvailableTables(widget.db!);
+
+      // Filter out internal tables (tables used by the application internally)
+      final internalTables = {'promoted_employees', 'promotions', 'transfers'};
+
+      final tables =
+          allTables.where((table) => !internalTables.contains(table)).toList();
+
       setState(() {
         _tables = tables;
         _isLoading = false;
@@ -105,7 +122,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         _isLoading = true;
         _tableData = [];
         _columns = [];
-        _processedBadgeNumbers.clear(); // Clear the set when starting fresh
+        _processedBadgeNumbers.clear();
       });
     } else {
       setState(() {
@@ -131,10 +148,8 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
 
       if (data.isNotEmpty && !loadMore) {
         _columns = data.first.keys.toList();
-        print("Available columns: $_columns"); // Debug print
       }
 
-      // Process data with cross-batch duplicate checking
       final processedData = DataProcessor.processAndMarkDifferentCells(
         data,
         _columns,
@@ -147,7 +162,6 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         if (!loadMore) {
           _tableData = processedData;
         } else {
-          // Only add records that don't already exist in _tableData
           for (final record in processedData) {
             if (!_tableData.any((existing) => existing['id'] == record['id'])) {
               _tableData.add(record);
@@ -156,8 +170,6 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         }
         _isLoading = false;
         _isLoadingMore = false;
-
-        // Refresh the data source with current column visibility
         _refreshDataSource();
       });
     } catch (e) {
@@ -202,25 +214,11 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         whereArgs: [record['id']],
       );
 
-      // Update UI
+      // Update UI by removing the record and refreshing data source
       setState(() {
         _tableData.removeWhere((item) => item['id'] == record['id']);
-
-        // Recreate data source with updated data
-        final visibleColumns =
-            _columns
-                .where(
-                  (column) =>
-                      column != 'id' && !column.endsWith('_highlighted'),
-                )
-                .toList();
-
-        _dataSource = TableDataSource(
-          _tableData,
-          visibleColumns,
-          _arabicColumnNames,
-          onDeleteRecord: _deleteRecord,
-        );
+        // Refresh the data source with proper column synchronization
+        _refreshDataSource();
       });
 
       // Show success message
@@ -262,6 +260,19 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
 
   // Add method to refresh data source with current column visibility
   void _refreshDataSource() {
+    if (_tableData.isEmpty) {
+      // Handle empty data case
+      _dataSource = TableDataSource(
+        [],
+        [],
+        _arabicColumnNames,
+        onDeleteRecord: _deleteRecord,
+        onCellSelected: _onCellSelected,
+        onCopyCellContent: _copyCellContent,
+      );
+      return;
+    }
+
     final visibleColumns =
         _columns
             .where(
@@ -352,18 +363,6 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
                             ),
                           ),
                         ],
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        '$_selectedTable',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18.sp.clamp(16, 22),
-                          color: AppColors.primaryColor,
-                        ),
                       ),
                     ),
                   ),

@@ -14,6 +14,7 @@ import 'package:hr/view_data_screen.dart';
 import 'package:hr/view_latest_data_screen.dart';
 import 'package:hr/promoted_screen.dart';
 import 'package:hr/transfers_screen.dart';
+import 'package:hr/edit_data_screen.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class AddDataScreen extends StatefulWidget {
@@ -45,10 +46,53 @@ class _AddDataScreenState extends State<AddDataScreen> {
   }
 
   Future<void> _initializeDatabase() async {
-    _db = await DatabaseService.openDatabase();
-    _configSheetService = ConfigSheetService(_db!);
-    await _updateLatestTable();
-    await _checkConfigTables();
+    try {
+      setState(() {
+        _status = 'جاري تهيئة قاعدة البيانات...';
+      });
+
+      _db = await DatabaseService.openDatabase();
+
+      // Verify database is working
+      final testQuery = await _db!.rawQuery('SELECT 1 as test');
+      print('Database test query result: $testQuery');
+
+      _configSheetService = ConfigSheetService(_db!);
+      await _updateLatestTable();
+      await _checkConfigTables();
+
+      setState(() {
+        _status = 'جاهز لرفع ملف Excel';
+      });
+
+      print('Database initialization completed successfully');
+    } catch (e) {
+      print('Database initialization error: $e');
+      setState(() {
+        _status = 'خطأ في تهيئة قاعدة البيانات: ${e.toString()}';
+      });
+
+      // Try alternative initialization
+      try {
+        if (Platform.isWindows || Platform.isLinux) {
+          sqfliteFfiInit();
+          databaseFactory = databaseFactoryFfi;
+        }
+        _db = await DatabaseService.openDatabase();
+        _configSheetService = ConfigSheetService(_db!);
+        await _updateLatestTable();
+        await _checkConfigTables();
+
+        setState(() {
+          _status = 'جاهز لرفع ملف Excel (تم الاستعادة)';
+        });
+      } catch (retryError) {
+        print('Retry failed: $retryError');
+        setState(() {
+          _status = 'فشل في تهيئة قاعدة البيانات';
+        });
+      }
+    }
   }
 
   Future<void> _updateLatestTable() async {
@@ -75,11 +119,12 @@ class _AddDataScreenState extends State<AddDataScreen> {
   PreferredSizeWidget _buildAppBar() {
     final titles = [
       'إضافة بيانات',
-      'سجل المتغيرات',
+      'عرض البيانات',
       'عرض أحدث البيانات',
       'الترقيات',
       'تم ترقيتهم',
       'التنقلات',
+      'تعديل البيانات', // Add new title
     ];
     return AppBar(
       backgroundColor: AppColors.primaryColor,
@@ -113,6 +158,8 @@ class _AddDataScreenState extends State<AddDataScreen> {
           _buildDrawerItem(4, 'تم ترقيتهم', true),
           const SizedBox(height: 12),
           _buildDrawerItem(5, 'التنقلات', _staffAssignmentsExists),
+          const SizedBox(height: 12),
+          _buildDrawerItem(6, 'تعديل البيانات', true), // Add new menu item
         ],
       ),
     );
@@ -175,6 +222,8 @@ class _AddDataScreenState extends State<AddDataScreen> {
         return PromotedScreen(db: _db, tableName: "Base_Sheet");
       case 5:
         return TransfersScreen(db: _db, tableName: "Base_Sheet");
+      case 6:
+        return EditDataScreen(db: _db); // Add new screen
       default:
         return _buildAddDataScreen();
     }

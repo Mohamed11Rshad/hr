@@ -21,23 +21,23 @@ class PromotionCalculationService {
     final nextGrade = _calculateNextGrade(record['Grade']?.toString() ?? '');
     newRecord['Next_Grade'] = nextGrade;
 
-    // Calculate 4% Adjustment
+    // Calculate 4% Adjustment - format as integer
     final oldBasic = double.tryParse(record['Basic']?.toString() ?? '0') ?? 0;
     final fourPercentAdj = oldBasic * 0.04;
-    newRecord['4% Adj'] = fourPercentAdj.toStringAsFixed(2);
+    newRecord['4% Adj'] = fourPercentAdj.round().toString();
 
-    // Calculate Annual Increment
+    // Calculate Annual Increment - format as integer
     final annualIncrement = await _calculateAnnualIncrement(
       record,
       nextGrade,
       oldBasic,
       fourPercentAdj,
     );
-    newRecord['Annual_Increment'] = annualIncrement.toStringAsFixed(2);
+    newRecord['Annual_Increment'] = annualIncrement.round().toString();
 
-    // Calculate New Basic
+    // Calculate New Basic - format as integer
     final newBasic = oldBasic + fourPercentAdj + annualIncrement;
-    newRecord['New_Basic'] = newBasic.toStringAsFixed(2);
+    newRecord['New_Basic'] = newBasic.round().toString();
 
     return newRecord;
   }
@@ -113,8 +113,9 @@ class PromotionCalculationService {
       debugPrint("8888888888888888888888 midpointStatus: $midpointStatus");
 
       // Get annual increase data
-      final appraisalValue =
-          record['Appraisal5']?.toString().split('-')[1] ?? '';
+      var appraisalValue =
+          record['Appraisal5']?.toString().split('-')[1].replaceAll('+', 'p') ??
+          '';
       final annualIncreaseData = await db.query(
         annualIncreaseTable,
         where: 'Grade = ?',
@@ -141,7 +142,7 @@ class PromotionCalculationService {
         "8888888888888888888888 potentialIncrement: ${appraisalValue}_$midpointStatus",
       );
 
-      // Apply maximum limit
+      // Apply maximum limit and return as double (will be rounded in calculatePromotionData)
       return (potentialIncrement + oldBasePlusAdj) > maximum
           ? (maximum - oldBasePlusAdj)
           : (potentialIncrement < 0 ? 0 : potentialIncrement);

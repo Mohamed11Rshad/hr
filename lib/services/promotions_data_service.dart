@@ -258,15 +258,22 @@ class PromotionsDataService {
         return [];
       }
 
-      // Get data from base table
+      // Get data from base table - only latest record for each badge number
       final placeholders = badgeNumbers.map((_) => '?').join(',');
       final data = await db.rawQuery('''
-        SELECT * FROM "$baseTableName"
-        WHERE "$badgeColumn" IN ($placeholders)
-        ORDER BY id
+        SELECT t1.* FROM "$baseTableName" t1
+        INNER JOIN (
+          SELECT "$badgeColumn", MAX(id) as max_id
+          FROM "$baseTableName"
+          WHERE "$badgeColumn" IN ($placeholders)
+          GROUP BY "$badgeColumn"
+        ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.id = t2.max_id
+        ORDER BY t1.id
       ''', badgeNumbers);
 
-      print('Retrieved ${data.length} records from base table');
+      print(
+        'Retrieved ${data.length} records from base table (latest records only)',
+      );
 
       // Get status data for all badge numbers
       final statusData = await _getStatusData(badgeNumbers);
@@ -343,9 +350,11 @@ class PromotionsDataService {
           }
 
           fallbackRecord['Next_Grade'] = '';
-          fallbackRecord['4% Adj'] = '0.00';
-          fallbackRecord['Annual_Increment'] = '0.00';
-          fallbackRecord['New_Basic'] = record['Basic']?.toString() ?? '0.00';
+          fallbackRecord['4% Adj'] = '0';
+          fallbackRecord['Annual_Increment'] = '0';
+          fallbackRecord['New_Basic'] = _formatAsInteger(
+            record['Basic']?.toString() ?? '0',
+          );
           processedData.add(fallbackRecord);
         }
       }
@@ -410,12 +419,19 @@ class PromotionsDataService {
         orElse: () => 'Badge_NO',
       );
 
-      // Query the base table for this specific employee
-      final result = await db.query(
-        baseTableName,
-        where: '"$badgeColumn" = ?',
-        whereArgs: [badgeNo],
-        limit: 1,
+      // Query the base table for this specific employee (latest record only)
+      final result = await db.rawQuery(
+        '''
+        SELECT t1.* FROM "$baseTableName" t1
+        INNER JOIN (
+          SELECT "$badgeColumn", MAX(id) as max_id
+          FROM "$baseTableName"
+          WHERE "$badgeColumn" = ?
+          GROUP BY "$badgeColumn"
+        ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.id = t2.max_id
+        LIMIT 1
+      ''',
+        [badgeNo],
       );
 
       return result.isNotEmpty ? result.first : null;
@@ -492,11 +508,16 @@ class PromotionsDataService {
         return [];
       }
 
-      // Query the base table to find which badge numbers exist
+      // Query the base table to find which badge numbers exist (latest records only)
       final placeholders = badgeNumbers.map((_) => '?').join(',');
       final result = await db.rawQuery('''
-        SELECT DISTINCT "$badgeColumn" FROM "$baseTableName"
-        WHERE "$badgeColumn" IN ($placeholders)
+        SELECT DISTINCT t1."$badgeColumn" FROM "$baseTableName" t1
+        INNER JOIN (
+          SELECT "$badgeColumn", MAX(id) as max_id
+          FROM "$baseTableName"
+          WHERE "$badgeColumn" IN ($placeholders)
+          GROUP BY "$badgeColumn"
+        ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.id = t2.max_id
       ''', badgeNumbers);
 
       final foundBadges =
@@ -506,7 +527,7 @@ class PromotionsDataService {
               .toList();
 
       print(
-        'Found ${foundBadges.length} employees out of ${badgeNumbers.length} requested',
+        'Found ${foundBadges.length} employees out of ${badgeNumbers.length} requested (latest records only)',
       );
       return foundBadges;
     } catch (e) {
@@ -550,12 +571,18 @@ class PromotionsDataService {
     return '';
   }
 
+  String _formatAsInteger(String value) {
+    final doubleValue = double.tryParse(value) ?? 0;
+    return doubleValue.round().toString();
+  }
+
   Future<List<String>> addEmployeesToPromotions(
     List<String> badgeNumbers,
   ) async {
     final batch = db.batch();
     final now = DateTime.now().toIso8601String();
     final duplicates = <String>[];
+    final validationErrors = <String>[];
 
     try {
       // First, check which employees exist in the base table
@@ -571,6 +598,17 @@ class PromotionsDataService {
         if (existing.isEmpty) {
           // Get the original data from base table
           final baseData = await _getEmployeeFromBaseTable(badgeNo);
+
+          // Validate the employee data before adding
+          final validationResult = await _validateEmployeeData(
+            baseData,
+            badgeNo,
+          );
+          if (validationResult != null) {
+            validationErrors.add(validationResult);
+            continue; // Skip this employee
+          }
+
           final originalDate =
               baseData?['Adjusted_Eligible_Date']?.toString() ?? '';
           final originalPromReason = _getPromReasonFromBaseData(baseData);
@@ -587,10 +625,137 @@ class PromotionsDataService {
       }
 
       await batch.commit();
-      return duplicates;
+
+      // Return both duplicates and validation errors
+      final allErrors = <String>[];
+      allErrors.addAll(duplicates);
+      allErrors.addAll(validationErrors);
+      return allErrors;
     } catch (e) {
       print('Error adding employees to promotions: $e');
       rethrow;
+    }
+  }
+
+  Future<String?> _validateEmployeeData(
+    Map<String, dynamic>? baseData,
+    String badgeNo,
+  ) async {
+    if (baseData == null) return null;
+
+    try {
+      // Validate Old Basic against Salary Scale
+      final basicValidation = await _validateOldBasic(baseData, badgeNo);
+      if (basicValidation != null) return basicValidation;
+
+      // Validate Grade and Next Grade against Grade Range
+      final gradeValidation = await _validateGradeRange(baseData, badgeNo);
+      if (gradeValidation != null) return gradeValidation;
+
+      return null; // All validations passed
+    } catch (e) {
+      print('Error validating employee data for $badgeNo: $e');
+      return null; // Allow addition if validation fails
+    }
+  }
+
+  Future<String?> _validateOldBasic(
+    Map<String, dynamic> baseData,
+    String badgeNo,
+  ) async {
+    try {
+      final oldBasic =
+          double.tryParse(baseData['Basic']?.toString() ?? '0') ?? 0;
+      final grade = baseData['Grade']?.toString() ?? '';
+      final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
+
+      if (oldBasic == 0 || grade.isEmpty) return null;
+
+      // Determine which salary scale table to use
+      final salaryScaleTable =
+          payScaleArea.contains('Category B')
+              ? 'Salary_Scale_B'
+              : 'Salary_Scale_A';
+
+      // Get minimum and maximum salary for this grade
+      final salaryScaleData = await db.query(
+        salaryScaleTable,
+        where: 'Grade = ?',
+        whereArgs: [grade],
+      );
+
+      if (salaryScaleData.isNotEmpty) {
+        final minimum =
+            double.tryParse(
+              salaryScaleData.first['minimum']?.toString() ?? '0',
+            ) ??
+            0;
+        final maximum =
+            double.tryParse(
+              salaryScaleData.first['maximum']?.toString() ?? '0',
+            ) ??
+            0;
+
+        // Check if old basic is below minimum
+        if (oldBasic < minimum) {
+          return 'Badge $badgeNo: Old Basic (${oldBasic.round()}) is below minimum (${minimum.round()}) for Grade $grade';
+        }
+
+        // Check if old basic exceeds maximum
+        if (oldBasic > maximum) {
+          return 'Badge $badgeNo: Old Basic (${oldBasic.round()}) exceeds maximum (${maximum.round()}) for Grade $grade';
+        }
+      }
+
+      return null;
+    } catch (e) {
+      print('Error validating old basic for $badgeNo: $e');
+      return null;
+    }
+  }
+
+  Future<String?> _validateGradeRange(
+    Map<String, dynamic> baseData,
+    String badgeNo,
+  ) async {
+    try {
+      final currentGrade = baseData['Grade']?.toString() ?? '';
+      final gradeRange = baseData['Grade_Range']?.toString() ?? '';
+
+      if (currentGrade.isEmpty || gradeRange.isEmpty) return null;
+
+      // Calculate next grade
+      final currentGradeInt =
+          int.tryParse(currentGrade.replaceAll(RegExp(r'^0+'), '')) ?? 0;
+      final nextGradeInt = currentGradeInt + 1;
+
+      if (currentGradeInt == 0) return null;
+
+      // Parse grade range (format: 008-013)
+      final rangeParts = gradeRange.split('-');
+      if (rangeParts.length < 2) return null;
+
+      final rangeMin =
+          int.tryParse(rangeParts[0].replaceAll(RegExp(r'^0+'), '')) ?? 0;
+      final rangeMax =
+          int.tryParse(rangeParts[1].replaceAll(RegExp(r'^0+'), '')) ?? 0;
+
+      if (rangeMin == 0 || rangeMax == 0) return null;
+
+      // Check if current grade is within range
+      if (currentGradeInt < rangeMin || currentGradeInt > rangeMax) {
+        return 'Badge $badgeNo: Current Grade ($currentGradeInt) is not within Grade Range ($gradeRange)';
+      }
+
+      // Check if next grade is within range
+      if (nextGradeInt > rangeMax) {
+        return 'Badge $badgeNo: Next Grade ($nextGradeInt) would exceed Grade Range maximum ($rangeMax)';
+      }
+
+      return null;
+    } catch (e) {
+      print('Error validating grade range for $badgeNo: $e');
+      return null;
     }
   }
 }
