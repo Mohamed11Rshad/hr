@@ -8,6 +8,8 @@ class EditableDataGrid extends StatelessWidget {
   final List<String> columns;
   final Function(int, String, String) onCellUpdate;
   final Function(int) onDeleteRow;
+  final String? selectedTable;
+  final Function(int, String)? checkCellEditable;
 
   const EditableDataGrid({
     Key? key,
@@ -15,6 +17,8 @@ class EditableDataGrid extends StatelessWidget {
     required this.columns,
     required this.onCellUpdate,
     required this.onDeleteRow,
+    this.selectedTable,
+    this.checkCellEditable,
   }) : super(key: key);
 
   @override
@@ -25,6 +29,8 @@ class EditableDataGrid extends StatelessWidget {
       context: context,
       onCellUpdate: onCellUpdate,
       onDeleteRow: onDeleteRow,
+      selectedTable: selectedTable,
+      checkCellEditable: checkCellEditable,
     );
 
     return Directionality(
@@ -113,6 +119,8 @@ class _EditableDataSource extends DataGridSource {
   final BuildContext context;
   final Function(int, String, String) onCellUpdate;
   final Function(int) onDeleteRow;
+  final String? selectedTable;
+  final Function(int, String)? checkCellEditable;
   List<DataGridRow> _dataGridRows = [];
 
   _EditableDataSource(
@@ -121,6 +129,8 @@ class _EditableDataSource extends DataGridSource {
     required this.context,
     required this.onCellUpdate,
     required this.onDeleteRow,
+    this.selectedTable,
+    this.checkCellEditable,
   }) {
     _buildDataGridRows();
   }
@@ -152,41 +162,63 @@ class _EditableDataSource extends DataGridSource {
           return Container(
             alignment: Alignment.center,
             padding: const EdgeInsets.all(4.0),
-            child: InkWell(
-              onTap:
-                  () => _showEditDialog(
-                    rowIndex,
-                    dataGridCell.columnName,
-                    dataGridCell.value.toString(),
+            child: FutureBuilder<bool>(
+              future: _isCellEditableAsync(rowIndex, dataGridCell.columnName),
+              builder: (context, snapshot) {
+                final isEditable = snapshot.data ?? true;
+
+                return InkWell(
+                  onTap:
+                      isEditable
+                          ? () => _showEditDialog(
+                            rowIndex,
+                            dataGridCell.columnName,
+                            dataGridCell.value.toString(),
+                          )
+                          : null,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color:
+                            isEditable
+                                ? AppColors.primaryColor.withAlpha(150)
+                                : Colors.grey.shade600,
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                      color:
+                          isEditable
+                              ? AppColors.primaryColor.withAlpha(50)
+                              : Colors.grey.shade300,
+                    ),
+                    child: Text(
+                      dataGridCell.value.toString().isEmpty
+                          ? (isEditable ? 'Click to edit' : 'Not editable')
+                          : dataGridCell.value.toString(),
+                      style: TextStyle(
+                        fontSize: 14,
+                        color:
+                            isEditable
+                                ? (dataGridCell.value.toString().isEmpty
+                                    ? Colors.grey.shade600
+                                    : AppColors.primaryColor)
+                                : Colors.grey.shade600,
+                        fontStyle:
+                            dataGridCell.value.toString().isEmpty
+                                ? FontStyle.italic
+                                : FontStyle.normal,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                decoration: BoxDecoration(
-                  border: Border.all(color: AppColors.primaryColor),
-                  borderRadius: BorderRadius.circular(4),
-                  color: AppColors.primaryColor.withAlpha(20),
-                ),
-                child: Text(
-                  dataGridCell.value.toString().isEmpty
-                      ? 'Click to edit'
-                      : dataGridCell.value.toString(),
-                  style: TextStyle(
-                    fontSize: 14,
-                    color:
-                        dataGridCell.value.toString().isEmpty
-                            ? Colors.grey.shade600
-                            : AppColors.primaryColor,
-                    fontStyle:
-                        dataGridCell.value.toString().isEmpty
-                            ? FontStyle.italic
-                            : FontStyle.normal,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
+                );
+              },
             ),
           );
         }).toList();
@@ -207,11 +239,55 @@ class _EditableDataSource extends DataGridSource {
     return DataGridRowAdapter(color: Colors.white, cells: cells);
   }
 
+  Future<bool> _isCellEditableAsync(int rowIndex, String columnName) async {
+    // For Base_Sheet table, check specific restrictions
+    if (selectedTable == 'Base_Sheet') {
+      // Badge_NO and Employee_Name are never editable
+      if (columnName == 'Badge_NO' || columnName == 'Employee_Name') {
+        return false;
+      }
+
+      // Basic column requires database check
+      if (columnName == 'Basic' && checkCellEditable != null) {
+        try {
+          return await checkCellEditable!(rowIndex, columnName);
+        } catch (e) {
+          return true; // Default to editable if check fails
+        }
+      }
+    }
+
+    // All other cells are editable
+    return true;
+  }
+
+  bool _isCellEditable(int rowIndex, String columnName) {
+    // For Base_Sheet table, check if Basic column is editable
+    if (selectedTable == 'Base_Sheet' && columnName == 'Basic') {
+      // This is a simplified check - the async version should be used for accurate results
+      return true;
+    }
+
+    // All other cells are editable
+    return true;
+  }
+
   void _showEditDialog(
     int rowIndex,
     String columnName,
     String currentValue,
   ) async {
+    // Check if this cell is editable
+    if (!_isCellEditable(rowIndex, columnName)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('هذا الحقل غير قابل للتعديل'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     final controller = TextEditingController(text: currentValue);
 
     final result = await showDialog<String>(

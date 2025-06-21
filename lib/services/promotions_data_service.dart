@@ -648,10 +648,6 @@ class PromotionsDataService {
       final basicValidation = await _validateOldBasic(baseData, badgeNo);
       if (basicValidation != null) return basicValidation;
 
-      // Validate Grade and Next Grade against Grade Range
-      final gradeValidation = await _validateGradeRange(baseData, badgeNo);
-      if (gradeValidation != null) return gradeValidation;
-
       return null; // All validations passed
     } catch (e) {
       print('Error validating employee data for $badgeNo: $e');
@@ -710,51 +706,6 @@ class PromotionsDataService {
       return null;
     } catch (e) {
       print('Error validating old basic for $badgeNo: $e');
-      return null;
-    }
-  }
-
-  Future<String?> _validateGradeRange(
-    Map<String, dynamic> baseData,
-    String badgeNo,
-  ) async {
-    try {
-      final currentGrade = baseData['Grade']?.toString() ?? '';
-      final gradeRange = baseData['Grade_Range']?.toString() ?? '';
-
-      if (currentGrade.isEmpty || gradeRange.isEmpty) return null;
-
-      // Calculate next grade
-      final currentGradeInt =
-          int.tryParse(currentGrade.replaceAll(RegExp(r'^0+'), '')) ?? 0;
-      final nextGradeInt = currentGradeInt + 1;
-
-      if (currentGradeInt == 0) return null;
-
-      // Parse grade range (format: 008-013)
-      final rangeParts = gradeRange.split('-');
-      if (rangeParts.length < 2) return null;
-
-      final rangeMin =
-          int.tryParse(rangeParts[0].replaceAll(RegExp(r'^0+'), '')) ?? 0;
-      final rangeMax =
-          int.tryParse(rangeParts[1].replaceAll(RegExp(r'^0+'), '')) ?? 0;
-
-      if (rangeMin == 0 || rangeMax == 0) return null;
-
-      // Check if current grade is within range
-      if (currentGradeInt < rangeMin || currentGradeInt > rangeMax) {
-        return 'Badge $badgeNo: Current Grade ($currentGradeInt) is not within Grade Range ($gradeRange)';
-      }
-
-      // Check if next grade is within range
-      if (nextGradeInt > rangeMax) {
-        return 'Badge $badgeNo: Next Grade ($nextGradeInt) would exceed Grade Range maximum ($rangeMax)';
-      }
-
-      return null;
-    } catch (e) {
-      print('Error validating grade range for $badgeNo: $e');
       return null;
     }
   }

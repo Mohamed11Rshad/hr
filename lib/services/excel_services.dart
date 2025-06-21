@@ -255,4 +255,206 @@ class ExcelService {
     // Ensure the column name is valid SQL identifier
     return '"$sanitized"';
   }
+
+  Future<String?> validateBadgeUniqueness(
+    List<List<Data?>> rows,
+    List<String> headers,
+  ) async {
+    // Find badge and name columns
+    final badgeColumnIndex = _findBadgeColumnIndex(headers);
+    final nameColumnIndex = _findNameColumnIndex(headers);
+
+    if (badgeColumnIndex == -1) {
+      return 'خطأ: لم يتم العثور على عمود Badge أو Badge_NO في الملف';
+    }
+
+    if (nameColumnIndex == -1) {
+      return 'خطأ: لم يتم العثور على عمود Employee_Name في الملف';
+    }
+
+    final badgeToNameMap = <String, String>{};
+    final duplicateBadges = <String>{};
+
+    // Check within the file for badge duplicates with different names
+    for (int i = 1; i < rows.length; i++) {
+      // Skip header row
+      final row = rows[i];
+
+      if (badgeColumnIndex >= row.length || nameColumnIndex >= row.length)
+        continue;
+
+      final badgeCell = row[badgeColumnIndex];
+      final nameCell = row[nameColumnIndex];
+
+      if (badgeCell == null || nameCell == null) continue;
+
+      final badgeNo = badgeCell.value.toString().trim();
+      final employeeName = nameCell.value.toString().trim();
+
+      if (badgeNo.isEmpty || employeeName.isEmpty) continue;
+
+      if (badgeToNameMap.containsKey(badgeNo)) {
+        // Badge already exists, check if name is different
+        if (badgeToNameMap[badgeNo] != employeeName) {
+          duplicateBadges.add(badgeNo);
+        }
+      } else {
+        badgeToNameMap[badgeNo] = employeeName;
+      }
+    }
+
+    // Check against existing database records
+    final dbDuplicates = await _checkBadgeAgainstDatabase(badgeToNameMap);
+    duplicateBadges.addAll(dbDuplicates);
+
+    if (duplicateBadges.isNotEmpty) {
+      return 'خطأ: أرقام الموظفين التالية مكررة : ${duplicateBadges.join(', ')}';
+    }
+
+    return null; // No duplicates found
+  }
+
+  int _findBadgeColumnIndex(List<String> headers) {
+    for (int i = 0; i < headers.length; i++) {
+      final header = headers[i].toLowerCase();
+      if (header.contains('badge') &&
+          (header.contains('no') || header.contains('_no'))) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  int _findNameColumnIndex(List<String> headers) {
+    for (int i = 0; i < headers.length; i++) {
+      final header = headers[i].toLowerCase();
+      if (header.contains('employee') && header.contains('name')) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  Future<Set<String>> _checkBadgeAgainstDatabase(
+    Map<String, String> badgeToNameMap,
+  ) async {
+    final duplicates = <String>{};
+
+    try {
+      // Check if Base_Sheet table exists
+      final tableExists = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'Base_Sheet'",
+      );
+
+      if (tableExists.isEmpty) {
+        return duplicates; // No existing data to check against
+      }
+
+      // Get existing badge-name pairs from database
+      final existingRecords = await db.rawQuery('''
+        SELECT DISTINCT Badge_NO, Employee_Name 
+        FROM Base_Sheet 
+        WHERE Badge_NO IS NOT NULL AND Employee_Name IS NOT NULL
+      ''');
+
+      final dbBadgeToNameMap = <String, String>{};
+      for (final record in existingRecords) {
+        final badgeNo = record['Badge_NO']?.toString().trim() ?? '';
+        final employeeName = record['Employee_Name']?.toString().trim() ?? '';
+
+        if (badgeNo.isNotEmpty && employeeName.isNotEmpty) {
+          dbBadgeToNameMap[badgeNo] = employeeName;
+        }
+      }
+
+      // Check for conflicts between file data and database data
+      for (final entry in badgeToNameMap.entries) {
+        final badgeNo = entry.key;
+        final fileName = entry.value;
+
+        if (dbBadgeToNameMap.containsKey(badgeNo)) {
+          final dbName = dbBadgeToNameMap[badgeNo]!;
+          if (dbName != fileName) {
+            duplicates.add(badgeNo);
+          }
+        }
+      }
+    } catch (e) {
+      print('Error checking badge against database: $e');
+      // Don't fail the entire process for database check errors
+    }
+
+    return duplicates;
+  }
+
+  // Add validation call before table creation
+  Future<String> processExcelFileWithValidation(File file) async {
+    try {
+      final bytes = file.readAsBytesSync();
+      final excel = Excel.decodeBytes(bytes);
+
+      // Find the first sheet with data
+      String? targetSheetName;
+      for (var sheetName in excel.tables.keys) {
+        final sheet = excel.tables[sheetName]!;
+        if (sheet.rows.isNotEmpty) {
+          targetSheetName = sheetName;
+          break;
+        }
+      }
+
+      if (targetSheetName == null) {
+        return 'لا توجد بيانات في الملف';
+      }
+
+      final sheet = excel.tables[targetSheetName]!;
+      final rows = sheet.rows;
+
+      if (rows.isEmpty) {
+        return 'الملف فارغ';
+      }
+
+      // Get headers from first row
+      final headerRow = rows[0];
+      final headers = <String>[];
+
+      for (var cell in headerRow) {
+        final header = cell?.value.toString().trim() ?? '';
+        if (header.isNotEmpty) {
+          headers.add(header);
+        }
+      }
+
+      if (headers.isEmpty) {
+        return 'لا توجد أعمدة في الملف';
+      }
+
+      // Check for duplicate headers
+      final headerSet = <String>{};
+      final duplicateHeaders = <String>{};
+
+      for (final header in headers) {
+        if (headerSet.contains(header)) {
+          duplicateHeaders.add(header);
+        } else {
+          headerSet.add(header);
+        }
+      }
+
+      if (duplicateHeaders.isNotEmpty) {
+        return 'خطأ: الأعمدة ${duplicateHeaders.join(', ')} مكررة';
+      }
+
+      // Validate badge number uniqueness BEFORE processing
+      final badgeValidation = await validateBadgeUniqueness(rows, headers);
+      if (badgeValidation != null) {
+        return badgeValidation;
+      }
+
+      // Continue with normal processing - call original method
+      return await processExcelFile(file);
+    } catch (e) {
+      return 'خطأ في معالجة الملف: ${e.toString()}';
+    }
+  }
 }

@@ -271,16 +271,17 @@ class _AddDataScreenState extends State<AddDataScreen> {
         setState(() => _status = 'تم اختيار الملف، جاري التحليل...');
 
         // Add a small delay to allow UI to update
-        await Future.delayed(const Duration(milliseconds: 100));
-
-        // Process file in chunks to prevent UI blocking
+        await Future.delayed(
+          const Duration(milliseconds: 100),
+        ); // Process file in chunks to prevent UI blocking
         final excelService = ExcelService(_db!);
 
         // Update status during processing
         setState(() => _status = 'جاري قراءة الملف وتحليل البيانات...');
         await Future.delayed(const Duration(milliseconds: 100));
 
-        final result = await _processFileWithProgress(excelService, file);
+        // Use the new validation method
+        final result = await _processFileWithValidation(excelService, file);
 
         setState(() => _status = result);
         await _updateLatestTable();
@@ -308,27 +309,20 @@ class _AddDataScreenState extends State<AddDataScreen> {
     }
   }
 
-  Future<String> _processFileWithProgress(
+  Future<String> _processFileWithValidation(
     ExcelService excelService,
     File file,
   ) async {
-    // Break the processing into steps with UI updates
-    setState(() => _status = 'جاري تحليل هيكل الملف...');
+    // First validate badge uniqueness
+    setState(() => _status = 'جاري التحقق من صحة البيانات...');
     await Future.delayed(const Duration(milliseconds: 200));
 
-    setState(() => _status = 'جاري إنشاء قاعدة البيانات...');
-    await Future.delayed(const Duration(milliseconds: 200));
+    // Use the new validation method from ExcelService
+    final validationResult = await excelService.processExcelFileWithValidation(
+      file,
+    );
 
-    setState(() => _status = 'جاري إدراج البيانات... قد يستغرق هذا بعض الوقت');
-    await Future.delayed(const Duration(milliseconds: 200));
-
-    // Process the file
-    final result = await excelService.processExcelFile(file);
-
-    setState(() => _status = 'جاري إنهاء العملية...');
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    return result;
+    return validationResult;
   }
 
   List<String> _findDuplicatedColumns(File? file) {

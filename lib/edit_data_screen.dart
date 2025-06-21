@@ -37,20 +37,13 @@ class _EditDataScreenState extends State<EditDataScreen> {
     }
 
     try {
-      final allTables = await DatabaseService.getAvailableTables(widget.db!);
-
-      // Exclude base sheets and internal application tables from editing
+      final allTables = await DatabaseService.getAvailableTables(
+        widget.db!,
+      ); // Exclude only internal application tables from editing (allow Base_Sheet)
       final internalTables = {'promoted_employees', 'promotions', 'transfers'};
 
       final editableTables =
-          allTables
-              .where(
-                (table) =>
-                    !table.toLowerCase().contains('base') &&
-                    table != 'Base_Sheet' &&
-                    !internalTables.contains(table),
-              )
-              .toList();
+          allTables.where((table) => !internalTables.contains(table)).toList();
 
       setState(() {
         _tables = editableTables;
@@ -99,7 +92,35 @@ class _EditDataScreenState extends State<EditDataScreen> {
     String columnName,
     String newValue,
   ) async {
-    if (widget.db == null || _selectedTable == null) return;
+    if (widget.db == null || _selectedTable == null)
+      return; // Check if this is a non-editable column in Base_Sheet
+    if (_selectedTable == 'Base_Sheet') {
+      if (columnName == 'Badge_NO' || columnName == 'Employee_Name') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('لا يمكن تعديل رقم الموظف أو اسم الموظف'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // Check Basic column editability
+      if (columnName == 'Basic') {
+        final canEdit = await _canEditBasicColumn(rowIndex);
+        if (!canEdit) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'لا يمكن تعديل الراتب الأساسي - الموظف موجود في قائمة الترقيات أو تم ترقيته',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+    }
 
     try {
       final record = _tableData[rowIndex];
@@ -123,6 +144,44 @@ class _EditDataScreenState extends State<EditDataScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('خطأ في التحديث: ${e.toString()}')),
       );
+    }
+  }
+
+  Future<bool> _canEditBasicColumn(int rowIndex) async {
+    try {
+      final record = _tableData[rowIndex];
+
+      // Find the badge column
+      final badgeColumn = _columns.firstWhere(
+        (col) => col.toLowerCase().contains('badge'),
+        orElse: () => 'Badge_NO',
+      );
+
+      final badgeNo = record[badgeColumn]?.toString();
+      if (badgeNo == null || badgeNo.isEmpty) return true;
+
+      // Check if employee exists in promotions table
+      final promotionsExists = await widget.db!.query(
+        'promotions',
+        where: 'Badge_NO = ?',
+        whereArgs: [badgeNo],
+      );
+
+      if (promotionsExists.isNotEmpty) return false;
+
+      // Check if employee exists in promoted_employees table
+      final promotedExists = await widget.db!.query(
+        'promoted_employees',
+        where: 'Badge_NO = ?',
+        whereArgs: [badgeNo],
+      );
+
+      if (promotedExists.isNotEmpty) return false;
+
+      return true;
+    } catch (e) {
+      print('Error checking if can edit basic column: $e');
+      return true; // Allow editing if check fails
     }
   }
 
@@ -201,6 +260,24 @@ class _EditDataScreenState extends State<EditDataScreen> {
     }
   }
 
+  Future<bool> _isCellEditable(int rowIndex, String columnName) async {
+    // For Base_Sheet table, check specific column restrictions
+    if (_selectedTable == 'Base_Sheet') {
+      // Badge_NO and Employee_Name are never editable in Base_Sheet
+      if (columnName == 'Badge_NO' || columnName == 'Employee_Name') {
+        return false;
+      }
+
+      // Basic column is editable only if employee is not in promotions/promoted tables
+      if (columnName == 'Basic') {
+        return await _canEditBasicColumn(rowIndex);
+      }
+    }
+
+    // All other cells are editable
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -273,12 +350,13 @@ class _EditDataScreenState extends State<EditDataScreen> {
     if (_tableData.isEmpty) {
       return const Center(child: Text('لا توجد بيانات في هذا الجدول'));
     }
-
     return EditableDataGrid(
       data: _tableData,
       columns: _columns,
       onCellUpdate: _updateCellValue,
       onDeleteRow: _deleteRow,
+      selectedTable: _selectedTable,
+      checkCellEditable: _isCellEditable,
     );
   }
 }
