@@ -35,9 +35,14 @@ class PromotionCalculationService {
     );
     newRecord['Annual_Increment'] = annualIncrement.round().toString();
 
-    // Calculate New Basic - format as integer
-    final newBasic = oldBasic + fourPercentAdj + annualIncrement;
-    newRecord['New_Basic'] = newBasic.round().toString();
+    // Calculate New Basic with validation against maximum - format as integer
+    final calculatedNewBasic = oldBasic + fourPercentAdj + annualIncrement;
+    final validatedNewBasic = await _validateNewBasicAgainstMaximum(
+      record,
+      nextGrade,
+      calculatedNewBasic,
+    );
+    newRecord['New_Basic'] = validatedNewBasic.round().toString();
 
     return newRecord;
   }
@@ -143,9 +148,7 @@ class PromotionCalculationService {
       );
 
       // Apply maximum limit and return as double (will be rounded in calculatePromotionData)
-      return (potentialIncrement + oldBasePlusAdj) > maximum
-          ? (maximum - oldBasePlusAdj)
-          : (potentialIncrement < 0 ? 0 : potentialIncrement);
+      return potentialIncrement < 0 ? 0 : potentialIncrement;
     } catch (e) {
       print('Error calculating annual increment: $e');
       return 0;
@@ -169,6 +172,53 @@ class PromotionCalculationService {
       );
     } else {
       return DateTime.parse(dateString);
+    }
+  }
+
+  // Add new method to validate new basic against maximum
+  Future<double> _validateNewBasicAgainstMaximum(
+    Map<String, dynamic> record,
+    String nextGrade,
+    double calculatedNewBasic,
+  ) async {
+    try {
+      // Determine which tables to use
+      final payScaleArea = record['pay_scale_area_text']?.toString() ?? '';
+      final salaryScaleTable =
+          payScaleArea.contains('Category B')
+              ? 'Salary_Scale_B'
+              : 'Salary_Scale_A';
+
+      // Get salary scale data for next grade
+      final salaryScaleData = await db.query(
+        salaryScaleTable,
+        where: 'Grade = ?',
+        whereArgs: [nextGrade],
+      );
+
+      if (salaryScaleData.isEmpty) {
+        // If no salary scale data found, return calculated value
+        return calculatedNewBasic;
+      }
+
+      final maximum =
+          double.tryParse(
+            salaryScaleData.first['maximum']?.toString() ?? '0',
+          ) ??
+          0;
+
+      // If calculated new basic exceeds maximum, cap it at maximum
+      if (calculatedNewBasic > maximum && maximum > 0) {
+        debugPrint(
+          'New Basic capped: Calculated=$calculatedNewBasic, Maximum=$maximum for Grade $nextGrade',
+        );
+        return maximum;
+      }
+
+      return calculatedNewBasic;
+    } catch (e) {
+      print('Error validating new basic against maximum: $e');
+      return calculatedNewBasic; // Return calculated value if validation fails
     }
   }
 }

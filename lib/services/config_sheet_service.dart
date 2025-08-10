@@ -52,7 +52,10 @@ class ConfigSheetService {
       }
 
       // Create a valid table name by replacing spaces with underscores
-      final tableName = sheetName.replaceAll(' ', '_');
+      final tableName = sheetName.replaceAll(
+        ' ',
+        '_',
+      ); // "Staff Assignments" becomes "Staff_Assignments"
 
       // Check if table exists
       final tables = await db.rawQuery(

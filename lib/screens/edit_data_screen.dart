@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:hr/core/app_colors.dart';
 import 'package:hr/services/database_service.dart';
-import 'package:hr/widgets/editable_data_grid.dart';
+import 'package:hr/widgets/editable_data_grid.dart'
+    hide SizedBox, ElevatedButton, TextButton;
+import 'package:hr/widgets/custom_snackbar.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:top_snackbar_flutter/top_snack_bar.dart';
+import 'package:top_snackbar_flutter/custom_snack_bar.dart';
 
 class EditDataScreen extends StatefulWidget {
   final Database? db;
@@ -69,7 +73,15 @@ class _EditDataScreenState extends State<EditDataScreen> {
     });
 
     try {
-      final data = await widget.db!.query(tableName);
+      List<Map<String, dynamic>> data;
+
+      // Special handling for Base_Sheet to show only latest records per employee
+      if (tableName == 'Base_Sheet') {
+        data = await _getLatestRecordsFromBaseSheet();
+      } else {
+        // For other tables, load all data normally
+        data = await widget.db!.query(tableName);
+      }
 
       if (data.isNotEmpty) {
         _columns = data.first.keys.where((col) => col != 'id').toList();
@@ -87,38 +99,116 @@ class _EditDataScreenState extends State<EditDataScreen> {
     }
   }
 
+  Future<List<Map<String, dynamic>>> _getLatestRecordsFromBaseSheet() async {
+    try {
+      // First determine the badge column name for ordering
+      String badgeColumnName = '';
+      try {
+        final tableInfo = await widget.db!.rawQuery(
+          'PRAGMA table_info("Base_Sheet")',
+        );
+        badgeColumnName = tableInfo
+            .map((col) => col['name'].toString())
+            .firstWhere(
+              (name) => name.toLowerCase().contains('badge'),
+              orElse: () => 'Badge_NO',
+            );
+      } catch (e) {
+        badgeColumnName = 'Badge_NO'; // Default if we can't determine
+      }
+
+      final orderBy =
+          badgeColumnName.isNotEmpty
+              ? 'CAST(t1."$badgeColumnName" AS INTEGER) ASC'
+              : 't1.id ASC';
+
+      // Get the latest upload_date
+      final latestDateQuery = await widget.db!.rawQuery(
+        'SELECT MAX(upload_date) as latest_date FROM "Base_Sheet" WHERE upload_date IS NOT NULL',
+      );
+
+      final latestDate = latestDateQuery.first['latest_date']?.toString();
+
+      if (latestDate == null || latestDate.isEmpty) {
+        // If no upload_date found, get latest record per badge number
+        final data = await widget.db!.rawQuery('''
+          SELECT t1.* FROM "Base_Sheet" t1
+          INNER JOIN (
+            SELECT t2."$badgeColumnName", MAX(t2.id) as max_id
+            FROM "Base_Sheet" t2
+            GROUP BY t2."$badgeColumnName"
+          ) t3 ON t1."$badgeColumnName" = t3."$badgeColumnName" AND t1.id = t3.max_id
+          ORDER BY $orderBy
+        ''');
+        return data;
+      }
+
+      // Get records with the latest upload_date, ensuring we get the latest record per badge number
+      final data = await widget.db!.rawQuery(
+        '''
+        SELECT t1.* FROM "Base_Sheet" t1
+        INNER JOIN (
+          SELECT t2."$badgeColumnName", MAX(t2.id) as max_id
+          FROM "Base_Sheet" t2
+          WHERE t2.upload_date = ?
+          GROUP BY t2."$badgeColumnName"
+        ) t3 ON t1."$badgeColumnName" = t3."$badgeColumnName" AND t1.id = t3.max_id
+        ORDER BY $orderBy
+      ''',
+        [latestDate],
+      );
+
+      return data;
+    } catch (e) {
+      print('Error getting latest records from Base_Sheet: $e');
+      // Fallback to regular query with latest record per badge
+      try {
+        final tableInfo = await widget.db!.rawQuery(
+          'PRAGMA table_info("Base_Sheet")',
+        );
+        final badgeColumnName = tableInfo
+            .map((col) => col['name'].toString())
+            .firstWhere(
+              (name) => name.toLowerCase().contains('badge'),
+              orElse: () => 'Badge_NO',
+            );
+
+        final orderBy =
+            badgeColumnName.isNotEmpty
+                ? 'CAST(t1."$badgeColumnName" AS INTEGER) ASC'
+                : 't1.id ASC';
+
+        return await widget.db!.rawQuery('''
+          SELECT t1.* FROM "Base_Sheet" t1
+          INNER JOIN (
+            SELECT t2."$badgeColumnName", MAX(t2.id) as max_id
+            FROM "Base_Sheet" t2
+            GROUP BY t2."$badgeColumnName"
+          ) t3 ON t1."$badgeColumnName" = t3."$badgeColumnName" AND t1.id = t3.max_id
+          ORDER BY $orderBy
+        ''');
+      } catch (fallbackError) {
+        print('Fallback also failed: $fallbackError');
+        return await widget.db!.query('Base_Sheet');
+      }
+    }
+  }
+
   Future<void> _updateCellValue(
     int rowIndex,
     String columnName,
     String newValue,
   ) async {
-    if (widget.db == null || _selectedTable == null)
-      return; // Check if this is a non-editable column in Base_Sheet
+    if (widget.db == null || _selectedTable == null) return;
+
+    // Check if this is a non-editable column in Base_Sheet
     if (_selectedTable == 'Base_Sheet') {
       if (columnName == 'Badge_NO' || columnName == 'Employee_Name') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('لا يمكن تعديل رقم الموظف أو اسم الموظف'),
-            backgroundColor: Colors.orange,
-          ),
+        CustomSnackbar.showError(
+          context,
+          'لا يمكن تعديل رقم الموظف أو اسم الموظف',
         );
         return;
-      }
-
-      // Check Basic column editability
-      if (columnName == 'Basic') {
-        final canEdit = await _canEditBasicColumn(rowIndex);
-        if (!canEdit) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'لا يمكن تعديل الراتب الأساسي - الموظف موجود في قائمة الترقيات أو تم ترقيته',
-              ),
-              backgroundColor: Colors.orange,
-            ),
-          );
-          return;
-        }
       }
     }
 
@@ -137,51 +227,9 @@ class _EditDataScreenState extends State<EditDataScreen> {
         _tableData[rowIndex][columnName] = newValue;
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('تم تحديث البيانات بنجاح')));
+      CustomSnackbar.showSuccess(context, 'تم تحديث البيانات بنجاح');
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ في التحديث: ${e.toString()}')),
-      );
-    }
-  }
-
-  Future<bool> _canEditBasicColumn(int rowIndex) async {
-    try {
-      final record = _tableData[rowIndex];
-
-      // Find the badge column
-      final badgeColumn = _columns.firstWhere(
-        (col) => col.toLowerCase().contains('badge'),
-        orElse: () => 'Badge_NO',
-      );
-
-      final badgeNo = record[badgeColumn]?.toString();
-      if (badgeNo == null || badgeNo.isEmpty) return true;
-
-      // Check if employee exists in promotions table
-      final promotionsExists = await widget.db!.query(
-        'promotions',
-        where: 'Badge_NO = ?',
-        whereArgs: [badgeNo],
-      );
-
-      if (promotionsExists.isNotEmpty) return false;
-
-      // Check if employee exists in promoted_employees table
-      final promotedExists = await widget.db!.query(
-        'promoted_employees',
-        where: 'Badge_NO = ?',
-        whereArgs: [badgeNo],
-      );
-
-      if (promotedExists.isNotEmpty) return false;
-
-      return true;
-    } catch (e) {
-      print('Error checking if can edit basic column: $e');
-      return true; // Allow editing if check fails
+      CustomSnackbar.showError(context, 'خطأ في التحديث: ${e.toString()}');
     }
   }
 
@@ -202,13 +250,9 @@ class _EditDataScreenState extends State<EditDataScreen> {
         _tableData.add(newRecord);
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('تم إضافة سجل جديد')));
+      CustomSnackbar.showSuccess(context, 'تم إضافة سجل جديد');
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ في إضافة السجل: ${e.toString()}')),
-      );
+      CustomSnackbar.showError(context, 'خطأ في إضافة السجل: ${e.toString()}');
     }
   }
 
@@ -250,13 +294,9 @@ class _EditDataScreenState extends State<EditDataScreen> {
         _tableData.removeAt(rowIndex);
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('تم حذف السجل بنجاح')));
+      CustomSnackbar.showSuccess(context, 'تم حذف السجل بنجاح');
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('خطأ في الحذف: ${e.toString()}')));
+      CustomSnackbar.showError(context, 'خطأ في الحذف: ${e.toString()}');
     }
   }
 
@@ -268,10 +308,7 @@ class _EditDataScreenState extends State<EditDataScreen> {
         return false;
       }
 
-      // Basic column is editable only if employee is not in promotions/promoted tables
-      if (columnName == 'Basic') {
-        return await _canEditBasicColumn(rowIndex);
-      }
+      // Basic column is now always editable - removed promotion check
     }
 
     // All other cells are editable
@@ -350,7 +387,9 @@ class _EditDataScreenState extends State<EditDataScreen> {
     if (_tableData.isEmpty) {
       return const Center(child: Text('لا توجد بيانات في هذا الجدول'));
     }
+
     return EditableDataGrid(
+      key: ValueKey(_tableData.length), // Add key to force refresh
       data: _tableData,
       columns: _columns,
       onCellUpdate: _updateCellValue,

@@ -1,56 +1,53 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:hr/core/app_colors.dart';
-import 'package:hr/constants/transfers_constants.dart';
-import 'package:hr/widgets/transfers/transfers_data_source.dart';
+import 'package:hr/constants/appraisal_constants.dart';
+import 'package:hr/widgets/appraisal/appraisal_data_source.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
-import 'dart:async';
 
-class TransfersDataGrid extends StatefulWidget {
+class AppraisalDataGrid extends StatefulWidget {
   final List<Map<String, dynamic>> data;
   final List<String> columns;
   final Set<String> hiddenColumns;
-  final Function(Map<String, dynamic>) onRemoveTransfer;
-  final Function(String, String, String) onUpdateField;
   final Function(String) onCopyCellContent;
   final bool Function(DataGridColumnDragDetails)? onColumnDragging;
   final Function(int)? onFilterChanged;
+  final Function(int, String, String)? onCellValueChanged;
 
-  const TransfersDataGrid({
+  const AppraisalDataGrid({
     Key? key,
     required this.data,
     required this.columns,
     required this.hiddenColumns,
-    required this.onRemoveTransfer,
-    required this.onUpdateField,
     required this.onCopyCellContent,
     this.onColumnDragging,
     this.onFilterChanged,
+    this.onCellValueChanged,
   }) : super(key: key);
 
   @override
-  TransfersDataGridState createState() => TransfersDataGridState();
+  AppraisalDataGridState createState() => AppraisalDataGridState();
 
   // Public method to get filtered data - accessible from parent widget
   List<Map<String, dynamic>> getFilteredData() {
-    final state = (key as GlobalKey<TransfersDataGridState>?)?.currentState;
+    final state = (key as GlobalKey<AppraisalDataGridState>?)?.currentState;
     return state?.getFilteredData() ?? data;
   }
 }
 
-class TransfersDataGridState extends State<TransfersDataGrid> {
+class AppraisalDataGridState extends State<AppraisalDataGrid> {
   final Map<String, double> _columnWidths = {};
   final ScrollController _horizontalController = ScrollController();
   final ScrollController _verticalController = ScrollController();
   Timer? _scrollTimer;
-  TransfersDataSource? _dataSource;
-  int _filteredRecordCount = 0; // Add this
+  AppraisalDataSource? _dataSource;
+  int _filteredRecordCount = 0;
 
   @override
   void initState() {
     super.initState();
     _initializeColumnWidths();
-    _createDataSource(); // Add this
+    _createDataSource();
     // Initialize filtered count
     WidgetsBinding.instance.addPostFrameCallback((_) {
       setState(() {
@@ -60,15 +57,21 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
   }
 
   void _createDataSource() {
-    _dataSource = TransfersDataSource(
+    _dataSource = AppraisalDataSource(
       widget.data,
       widget.columns
           .where((col) => !widget.hiddenColumns.contains(col))
           .toList(),
-      context: context,
-      onRemoveTransfer: widget.onRemoveTransfer,
-      onUpdateField: widget.onUpdateField,
       onCopyCellContent: widget.onCopyCellContent,
+      context: context,
+      onCellValueChanged: (rowIndex, columnName, newValue) {
+        // Update the underlying data
+        if (rowIndex >= 0 && rowIndex < widget.data.length) {
+          widget.data[rowIndex][columnName] = newValue;
+          // Notify parent if callback is provided
+          widget.onCellValueChanged?.call(rowIndex, columnName, newValue);
+        }
+      },
     );
   }
 
@@ -90,8 +93,15 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
     return filteredData;
   }
 
+  // Add refresh method
+  void refresh() {
+    setState(() {
+      _createDataSource();
+    });
+  }
+
   @override
-  void didUpdateWidget(TransfersDataGrid oldWidget) {
+  void didUpdateWidget(AppraisalDataGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Recreate data source when data or columns change
     if (oldWidget.data != widget.data ||
@@ -127,14 +137,60 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
     return set1.length == set2.length && set1.containsAll(set2);
   }
 
+  @override
+  void dispose() {
+    _scrollTimer?.cancel();
+    _horizontalController.dispose();
+    _verticalController.dispose();
+    super.dispose();
+  }
+
+  void _initializeColumnWidths() {
+    _columnWidths.clear();
+    final visibleColumns = widget.columns.where(
+      (col) => !widget.hiddenColumns.contains(col),
+    );
+
+    for (final column in visibleColumns) {
+      _columnWidths[column] = _getColumnWidth(column);
+    }
+  }
+
+  double _getColumnWidth(String column) {
+    switch (column) {
+      case 'Badge_NO':
+        return 140;
+      case 'Employee_Name':
+        return 220;
+      case 'Bus_Line':
+      case 'Depart_Text':
+        return 180;
+      case 'Grade':
+        return 120;
+      case 'Appraisal5':
+        return 150;
+      case 'Basic':
+      case 'MIDPOINT':
+      case 'MAXIMUM':
+      case 'Annual_Increment':
+      case 'Actual_Increase':
+      case 'Lump_Sum_Payment':
+      case 'New_Basic':
+        return 160;
+      case 'Total_Lump_Sum_12_Months':
+        return 200;
+      case 'New_Basic_System':
+        return 180;
+      default:
+        return 150;
+    }
+  }
+
   List<GridColumn> _buildGridColumns() {
     final visibleColumns =
-        widget.columns
-            .where((col) => !widget.hiddenColumns.contains(col))
-            .toList();
-
-    final columns =
-        visibleColumns.map((column) {
+        widget.columns.where((col) => !widget.hiddenColumns.contains(col)).map((
+          column,
+        ) {
           return GridColumn(
             columnName: column,
             width: _columnWidths[column] ?? _getColumnWidth(column),
@@ -143,7 +199,7 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
               padding: const EdgeInsets.all(8.0),
               alignment: Alignment.center,
               child: Text(
-                TransfersConstants.columnNames[column] ?? column,
+                AppraisalConstants.columnNames[column] ?? column,
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
@@ -156,106 +212,7 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
           );
         }).toList();
 
-    // Add actions column
-    columns.add(
-      GridColumn(
-        columnName: 'actions',
-        width: _columnWidths['actions'] ?? 100.0,
-        minimumWidth: 100,
-        allowSorting: false,
-        allowFiltering: false,
-        label: Container(
-          padding: const EdgeInsets.all(8.0),
-          alignment: Alignment.center,
-          child: const Text(
-            'حذف',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-              fontSize: 14,
-            ),
-          ),
-        ),
-      ),
-    );
-
-    return columns;
-  }
-
-  void _startContinuousScroll(ScrollController controller, double delta) {
-    _scrollTimer?.cancel();
-    _scrollTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
-      if (controller.hasClients) {
-        final newOffset = (controller.offset + delta).clamp(
-          0.0,
-          controller.position.maxScrollExtent,
-        );
-        controller.jumpTo(newOffset);
-      }
-    });
-  }
-
-  void _stopContinuousScroll() {
-    _scrollTimer?.cancel();
-    _scrollTimer = null;
-  }
-
-  double _getColumnWidth(String column) {
-    switch (column) {
-      case 'S_NO':
-        return 120;
-      case 'Badge_NO':
-        return 160;
-      case 'Employee_Name':
-      case 'Position_Description':
-      case 'OrgUnit_Description':
-      case 'Occupancy':
-      case 'Bus_Line':
-      case 'Depart_Text':
-      case 'Position_Text':
-      case 'Emp_Position_Code':
-      case 'New_Bus_Line':
-        return 220;
-      default:
-        return 150;
-    }
-  }
-
-  void _updateColumnWidth(String columnName, double width) {
-    setState(() {
-      _columnWidths[columnName] = width;
-    });
-  }
-
-  @override
-  void dispose() {
-    _scrollTimer?.cancel();
-    _horizontalController.dispose();
-    _verticalController.dispose();
-    super.dispose();
-  }
-
-  void _initializeColumnWidths() {
-    _columnWidths.clear();
-    for (final column in widget.columns) {
-      if (!widget.hiddenColumns.contains(column)) {
-        _columnWidths[column] = _getColumnWidth(column);
-      }
-    }
-    _columnWidths['actions'] = 100.0;
-  }
-
-  // Add method to refresh data source
-  void refreshDataSource() {
-    _createDataSource();
-    setState(() {
-      _filteredRecordCount =
-          _dataSource?.effectiveRows.length ?? widget.data.length;
-    });
-    // Notify parent screen
-    if (widget.onFilterChanged != null) {
-      widget.onFilterChanged!(_filteredRecordCount);
-    }
+    return visibleColumns;
   }
 
   Widget _buildRecordCountBar() {
@@ -268,15 +225,15 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: AppColors.primaryColor.withAlpha(30),
+        color: Colors.blue.shade700.withOpacity(0.1),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: AppColors.primaryColor.withAlpha(90)),
+        border: Border.all(color: Colors.blue.shade700.withOpacity(0.3)),
       ),
       child: Directionality(
         textDirection: TextDirection.rtl,
         child: Row(
           children: [
-            Icon(Icons.info_outline, size: 18, color: AppColors.primaryColor),
+            Icon(Icons.info_outline, size: 18, color: Colors.blue.shade700),
             const SizedBox(width: 8),
             if (_filteredRecordCount > 0 &&
                 _filteredRecordCount != totalRecords)
@@ -285,7 +242,7 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: AppColors.primaryColor,
+                  color: Colors.blue.shade700,
                 ),
               )
             else
@@ -294,7 +251,7 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: AppColors.primaryColor,
+                  color: Colors.blue.shade700,
                 ),
               ),
             const Spacer(),
@@ -326,13 +283,13 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
   Widget build(BuildContext context) {
     return SfDataGridTheme(
       data: SfDataGridThemeData(
-        headerColor: AppColors.primaryColor,
+        headerColor: Colors.blue.shade700,
         gridLineColor: Colors.grey.shade300,
         gridLineStrokeWidth: 1.0,
         selectionColor: Colors.grey.shade400,
         filterIconColor: Colors.white,
         sortIconColor: Colors.white,
-        columnDragIndicatorColor: AppColors.primaryColor,
+        columnDragIndicatorColor: Colors.black,
         columnDragIndicatorStrokeWidth: 4,
       ),
       child: Padding(
@@ -349,7 +306,10 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
                 allowSorting: true,
                 allowFiltering: true,
                 allowColumnsDragging: true,
+                allowColumnsResizing: true,
+                columnResizeMode: ColumnResizeMode.onResize,
                 selectionMode: SelectionMode.single,
+                navigationMode: GridNavigationMode.cell,
                 showHorizontalScrollbar: true,
                 showVerticalScrollbar: true,
                 isScrollbarAlwaysShown: true,
@@ -357,22 +317,15 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
                 headerGridLinesVisibility: GridLinesVisibility.both,
                 rowHeight: 50,
                 headerRowHeight: 55,
-                allowColumnsResizing: true,
-                columnResizeMode: ColumnResizeMode.onResize,
-                onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
-                  setState(() {
-                    _columnWidths[details.column.columnName] = details.width;
-                  });
-                  return true;
-                },
                 columnDragFeedbackBuilder: (context, column) {
                   return Container(
                     width: _columnWidths[column.columnName] ?? 180,
                     height: 50,
-                    color: AppColors.primaryColor,
+                    color: Colors.blue.shade700,
                     child: Center(
                       child: Text(
-                        column.columnName,
+                        AppraisalConstants.columnNames[column.columnName] ??
+                            column.columnName,
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           decoration: TextDecoration.none,
@@ -383,6 +336,12 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
                       ),
                     ),
                   );
+                },
+                onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
+                  setState(() {
+                    _columnWidths[details.column.columnName] = details.width;
+                  });
+                  return true;
                 },
                 onFilterChanged: (DataGridFilterChangeDetails details) {
                   // Update filtered count and force UI refresh

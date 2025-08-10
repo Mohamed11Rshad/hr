@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:hr/add_data_screen.dart';
+import 'package:hr/screens/add_data_screen.dart';
 import 'package:hr/core/app_colors.dart';
 import 'package:syncfusion_localizations/syncfusion_localizations.dart';
 import 'package:easy_localization/easy_localization.dart';
@@ -60,7 +60,11 @@ class MyApp extends StatelessWidget {
               secondary: AppColors.primaryColor,
             ),
             fontFamily: 'Cairo',
+
             scrollbarTheme: ScrollbarThemeData(
+              thickness: WidgetStatePropertyAll(6.0.w),
+              mainAxisMargin: 40,
+
               thumbColor: WidgetStatePropertyAll<Color>(AppColors.primaryColor),
             ),
           ),

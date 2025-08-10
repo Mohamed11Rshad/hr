@@ -8,14 +8,20 @@ import 'package:hr/services/database_service.dart';
 import 'package:hr/services/excel_services.dart';
 import 'package:hr/services/file_picker_service.dart';
 import 'package:hr/services/config_sheet_service.dart';
+import 'package:hr/screens/transfers_screen.dart';
 import 'package:hr/widgets/main_upload_card.dart';
-import 'package:hr/promotions_screen.dart';
-import 'package:hr/view_data_screen.dart';
-import 'package:hr/view_latest_data_screen.dart';
-import 'package:hr/promoted_screen.dart';
-import 'package:hr/transfers_screen.dart';
-import 'package:hr/edit_data_screen.dart';
+import 'package:hr/screens/promotions_screen.dart';
+import 'package:hr/screens/view_data_screen.dart';
+import 'package:hr/screens/view_latest_data_screen.dart';
+import 'package:hr/screens/promoted_screen.dart';
+import 'package:hr/screens/edit_data_screen.dart';
+import 'package:hr/screens/transferred_screen.dart';
+import 'package:hr/screens/termination_screen.dart';
+import 'package:hr/screens/terminated_screen.dart';
+import 'package:hr/screens/appraisal_screen.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:top_snackbar_flutter/top_snack_bar.dart';
+import 'package:hr/widgets/custom_snackbar.dart';
 
 class AddDataScreen extends StatefulWidget {
   const AddDataScreen({super.key});
@@ -32,7 +38,8 @@ class _AddDataScreenState extends State<AddDataScreen> {
   bool _annualIncreaseAExists = false;
   bool _annualIncreaseBExists = false;
   bool _statusExists = false;
-  bool _staffAssignmentsExists = false; // Add new property
+  bool _staffAssignmentsExists = false;
+  bool _adjustmentsExists = false;
   final FilePickerService _filePicker = FilePickerService();
   late ConfigSheetService _configSheetService;
   Database? _db;
@@ -124,7 +131,11 @@ class _AddDataScreenState extends State<AddDataScreen> {
       'الترقيات',
       'تم ترقيتهم',
       'التنقلات',
-      'تعديل البيانات', // Add new title
+      'تم نقلهم',
+      'التسريحات',
+      'المسرحون',
+      'التقييمات',
+      'تعديل البيانات',
     ];
     return AppBar(
       backgroundColor: AppColors.primaryColor,
@@ -159,7 +170,15 @@ class _AddDataScreenState extends State<AddDataScreen> {
           const SizedBox(height: 12),
           _buildDrawerItem(5, 'التنقلات', _staffAssignmentsExists),
           const SizedBox(height: 12),
-          _buildDrawerItem(6, 'تعديل البيانات', true), // Add new menu item
+          _buildDrawerItem(6, 'تم نقلهم', _staffAssignmentsExists),
+          const SizedBox(height: 12),
+          _buildDrawerItem(7, 'التسريحات', true),
+          const SizedBox(height: 12),
+          _buildDrawerItem(8, 'المسرحون', true),
+          const SizedBox(height: 12),
+          _buildDrawerItem(9, 'التقييمات', _canAccessAppraisal()),
+          const SizedBox(height: 12),
+          _buildDrawerItem(10, 'تعديل البيانات', true),
         ],
       ),
     );
@@ -193,19 +212,23 @@ class _AddDataScreenState extends State<AddDataScreen> {
         _statusExists;
   }
 
+  bool _canAccessAppraisal() {
+    return _adjustmentsExists;
+  }
+
   void _showAccessMessage(int index) {
     String message = '';
     if (index == 3) {
       message =
           'يجب رفع جميع شيتات حساب الزيادة وشيت الحالة أولاً قبل الوصول إلى شاشة الترقيات';
-    } else if (index == 5) {
+    } else if (index == 5 || index == 6) {
       message =
           'يجب رفع شيت Staff Assignments أولاً قبل الوصول إلى شاشة التنقلات';
+    } else if (index == 9) {
+      message = 'يجب رفع شيت Adjustments أولاً قبل الوصول إلى شاشة التقييمات';
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
-    );
+    CustomSnackbar.showInfo(context, message);
   }
 
   Widget _buildBody() {
@@ -223,7 +246,15 @@ class _AddDataScreenState extends State<AddDataScreen> {
       case 5:
         return TransfersScreen(db: _db, tableName: "Base_Sheet");
       case 6:
-        return EditDataScreen(db: _db); // Add new screen
+        return TransferredScreen(db: _db, tableName: "Base_Sheet");
+      case 7:
+        return TerminationScreen(db: _db, tableName: "Base_Sheet");
+      case 8:
+        return TerminatedScreen(db: _db, tableName: "Base_Sheet");
+      case 9:
+        return AppraisalScreen(db: _db, tableName: "Base_Sheet");
+      case 10:
+        return EditDataScreen(db: _db);
       default:
         return _buildAddDataScreen();
     }
@@ -241,8 +272,8 @@ class _AddDataScreenState extends State<AddDataScreen> {
           annualIncreaseAExists: _annualIncreaseAExists,
           annualIncreaseBExists: _annualIncreaseBExists,
           statusExists: _statusExists,
-          staffAssignmentsExists:
-              _staffAssignmentsExists, // Add staff assignments status
+          staffAssignmentsExists: _staffAssignmentsExists,
+          adjustmentsExists: _adjustmentsExists,
           onMainUpload: _processExcelFile,
           onConfigUpload: _processConfigSheet,
         ),
@@ -405,9 +436,8 @@ class _AddDataScreenState extends State<AddDataScreen> {
       _annualIncreaseAExists = tables.contains('Annual_Increase_A');
       _annualIncreaseBExists = tables.contains('Annual_Increase_B');
       _statusExists = tables.contains('Status');
-      _staffAssignmentsExists = tables.contains(
-        'Staff_Assignments',
-      ); // Check for Staff Assignments table
+      _staffAssignmentsExists = tables.contains('Staff_Assignments');
+      _adjustmentsExists = tables.contains('Adjustments');
     });
   }
 

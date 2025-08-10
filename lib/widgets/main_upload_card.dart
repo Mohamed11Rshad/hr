@@ -11,7 +11,8 @@ class MainUploadCard extends StatelessWidget {
   final bool annualIncreaseAExists;
   final bool annualIncreaseBExists;
   final bool statusExists;
-  final bool staffAssignmentsExists; // Add new property
+  final bool staffAssignmentsExists;
+  final bool adjustmentsExists; // Add new property for Adjustments
   final VoidCallback onMainUpload;
   final Function(String) onConfigUpload;
 
@@ -24,7 +25,8 @@ class MainUploadCard extends StatelessWidget {
     required this.annualIncreaseAExists,
     required this.annualIncreaseBExists,
     required this.statusExists,
-    this.staffAssignmentsExists = false, // Add with default value
+    this.staffAssignmentsExists = false,
+    this.adjustmentsExists = false, // Add with default value
     required this.onMainUpload,
     required this.onConfigUpload,
   }) : super(key: key);
@@ -98,122 +100,120 @@ class MainUploadCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Column(
-                  textDirection: TextDirection.ltr,
-                  mainAxisAlignment: MainAxisAlignment.center,
+                Row(
                   children: [
-                    Text(
-                      'شيتات الترقية',
-                      style: TextStyle(
-                        fontSize: 20.sp.clamp(0, 20),
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-                    ConfigButton(
-                      isLoading: isLoading,
-                      title: 'Status',
-                      exists: statusExists,
-                      onPressed: () => onConfigUpload('Status'),
-                    ),
-                    const SizedBox(height: 15),
+                    Column(
+                      textDirection: TextDirection.ltr,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'شيتات الترقية',
+                          style: TextStyle(
+                            fontSize: 20.sp.clamp(0, 20),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 15),
+                        ConfigButton(
+                          isLoading: isLoading,
+                          title: 'Status',
+                          exists: statusExists,
+                          onPressed: () => onConfigUpload('Status'),
+                        ),
+                        const SizedBox(height: 15),
 
-                    ConfigButton(
-                      isLoading: isLoading,
-                      title: 'Salary Scale A',
-                      exists: salaryScaleAExists,
-                      onPressed: () => onConfigUpload('Salary Scale A'),
-                    ),
-                    const SizedBox(height: 15),
-                    ConfigButton(
-                      isLoading: isLoading,
-                      title: 'Salary Scale B',
-                      exists: salaryScaleBExists,
-                      onPressed: () => onConfigUpload('Salary Scale B'),
-                    ),
-                    const SizedBox(height: 15),
+                        ConfigButton(
+                          isLoading: isLoading,
+                          title: 'Salary Scale A',
+                          exists: salaryScaleAExists,
+                          onPressed: () => onConfigUpload('Salary Scale A'),
+                        ),
+                        const SizedBox(height: 15),
+                        ConfigButton(
+                          isLoading: isLoading,
+                          title: 'Salary Scale B',
+                          exists: salaryScaleBExists,
+                          onPressed: () => onConfigUpload('Salary Scale B'),
+                        ),
+                        const SizedBox(height: 15),
 
-                    ConfigButton(
-                      isLoading: isLoading,
-                      title: 'Annual Increase A',
-                      exists: annualIncreaseAExists,
-                      onPressed: () => onConfigUpload('Annual Increase A'),
+                        ConfigButton(
+                          isLoading: isLoading,
+                          title: 'Annual Increase A',
+                          exists: annualIncreaseAExists,
+                          onPressed: () => onConfigUpload('Annual Increase A'),
+                        ),
+                        const SizedBox(height: 15),
+                        ConfigButton(
+                          isLoading: isLoading,
+                          title: 'Annual Increase B',
+                          exists: annualIncreaseBExists,
+                          onPressed: () => onConfigUpload('Annual Increase B'),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 15),
-                    ConfigButton(
-                      isLoading: isLoading,
-                      title: 'Annual Increase B',
-                      exists: annualIncreaseBExists,
-                      onPressed: () => onConfigUpload('Annual Increase B'),
+                    const SizedBox(width: 40),
+                    Column(
+                      children: [
+                        Text(
+                          'شيتات التنقلات',
+                          style: TextStyle(
+                            fontSize: 20.sp.clamp(0, 20),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 15),
+                        ConfigButton(
+                          isLoading: isLoading,
+                          title: 'Staff Assignments',
+                          exists: staffAssignmentsExists,
+                          onPressed: () => onConfigUpload('Staff Assignments'),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-
-                SizedBox(width: 30.w.clamp(0, 30)),
-
-                Column(
-                  textDirection: TextDirection.ltr,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'شيتات التنقلات',
-                      style: TextStyle(
-                        fontSize: 20.sp.clamp(0, 20),
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-                    ConfigButton(
-                      isLoading: isLoading,
-                      title: 'Staff Assignments',
-                      exists: staffAssignmentsExists,
-                      onPressed: () => onConfigUpload('Staff Assignments'),
+                    const SizedBox(width: 40),
+                    Column(
+                      children: [
+                        Text(
+                          'شيتات التقييمات',
+                          style: TextStyle(
+                            fontSize: 20.sp.clamp(0, 20),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 15),
+                        ConfigButton(
+                          isLoading: isLoading,
+                          title: 'Adjustments',
+                          exists: adjustmentsExists,
+                          onPressed: () => onConfigUpload('Adjustments'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ],
             ),
-            const SizedBox(height: 30),
-            if (isLoading)
-              Column(
-                children: [
-                  SizedBox(
-                    width: double.infinity,
-                    child: LinearProgressIndicator(
-                      color: AppColors.primaryColor,
-                      backgroundColor: AppColors.primaryColor.withAlpha(40),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'يرجى عدم إغلاق التطبيق أثناء المعالجة',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.orange.shade700,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ],
-              )
-            else
-              SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.all(16.0),
+            const SizedBox(height: 20),
+
+            // Add status text at the bottom
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Text(
                 status,
-                textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 14,
                   color:
                       status.contains('خطأ')
                           ? Colors.red
-                          : status.contains('جاري')
-                          ? Colors.blue
-                          : status.contains('جاهز')
-                          ? Colors.blue
-                          : Colors.green,
-                  fontWeight: FontWeight.bold,
+                          : status.contains('تم')
+                          ? Colors.green
+                          : Colors.blue,
+                  fontWeight: FontWeight.w500,
                 ),
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],

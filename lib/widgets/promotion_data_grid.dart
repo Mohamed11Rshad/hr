@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:hr/core/app_colors.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
 
-class PromotionDataGrid extends StatelessWidget {
+class PromotionDataGrid extends StatefulWidget {
   final List<Map<String, dynamic>> data;
   final List<String> columns;
   final Map<String, String> columnNames;
@@ -11,11 +13,13 @@ class PromotionDataGrid extends StatelessWidget {
   final Function(String) onRemoveEmployee;
   final Function(String) onPromoteEmployee;
   final Function(String) onCopyCellContent;
-  final Function(String, String)? onUpdateAdjustedDate;
-  final Function(String, String)? onUpdatePromReason;
-  final ScrollController scrollController;
+  final Function(String, String) onUpdateAdjustedDate;
+  final Function(String, String) onUpdatePromReason;
+  final Function(DataGridColumnDragDetails)? onColumnDragging;
+  final ScrollController? scrollController;
   final bool isLoadingMore;
   final Function(String)? onCellSelected;
+  final Function(int)? onFilterChanged; // Add this
 
   const PromotionDataGrid({
     Key? key,
@@ -26,27 +30,146 @@ class PromotionDataGrid extends StatelessWidget {
     required this.onRemoveEmployee,
     required this.onPromoteEmployee,
     required this.onCopyCellContent,
-    this.onUpdateAdjustedDate,
-    this.onUpdatePromReason,
-    required this.scrollController,
+    required this.onUpdateAdjustedDate,
+    required this.onUpdatePromReason,
+    this.onColumnDragging,
+    this.scrollController,
     this.isLoadingMore = false,
     this.onCellSelected,
+    this.onFilterChanged, // Add this
   }) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
-    final dataSource = _PromotionDataSource(
-      data,
-      columns.where((col) => !hiddenColumns.contains(col)).toList(),
+  PromotionDataGridState createState() => PromotionDataGridState();
+
+  // Public method to get filtered data - accessible from parent widget
+  List<Map<String, dynamic>> getFilteredData() {
+    final state = (key as GlobalKey<PromotionDataGridState>?)?.currentState;
+    if (state != null) {
+      return state.getFilteredDataForExport();
+    }
+    return data;
+  }
+}
+
+class PromotionDataGridState extends State<PromotionDataGrid> {
+  late Map<String, double> _columnWidths = {};
+  final ScrollController _horizontalController = ScrollController();
+  Timer? _scrollTimer;
+  late _PromotionDataSource _dataSource; // Add this
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeColumnWidths();
+    _createDataSource(); // Add this
+  }
+
+  void _createDataSource() {
+    _dataSource = _PromotionDataSource(
+      widget.data,
+      widget.columns
+          .where((col) => !widget.hiddenColumns.contains(col))
+          .toList(),
       context: context,
-      onRemoveEmployee: onRemoveEmployee,
-      onPromoteEmployee: onPromoteEmployee,
-      onUpdateAdjustedDate: onUpdateAdjustedDate,
-      onUpdatePromReason: onUpdatePromReason,
-      onCellSelected: onCellSelected,
-      onCopyCellContent: onCopyCellContent,
+      onRemoveEmployee: widget.onRemoveEmployee,
+      onPromoteEmployee: widget.onPromoteEmployee,
+      onUpdateAdjustedDate: widget.onUpdateAdjustedDate,
+      onUpdatePromReason: widget.onUpdatePromReason,
+      onCellSelected: widget.onCellSelected,
+      onCopyCellContent: widget.onCopyCellContent,
+    );
+  }
+
+  // Public getter to access the data source
+  _PromotionDataSource get dataSource => _dataSource;
+
+  @override
+  void didUpdateWidget(PromotionDataGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Recreate data source when data or columns change
+    if (oldWidget.data != widget.data ||
+        !_listsEqual(oldWidget.columns, widget.columns) ||
+        !_setsEqual(oldWidget.hiddenColumns, widget.hiddenColumns)) {
+      _createDataSource();
+    }
+  }
+
+  bool _listsEqual(List<String> list1, List<String> list2) {
+    if (list1.length != list2.length) return false;
+    for (int i = 0; i < list1.length; i++) {
+      if (list1[i] != list2[i]) return false;
+    }
+    return true;
+  }
+
+  bool _setsEqual(Set<String> set1, Set<String> set2) {
+    return set1.length == set2.length && set1.containsAll(set2);
+  }
+
+  void _initializeColumnWidths() {
+    _columnWidths = {};
+    final visibleColumns = widget.columns.where(
+      (col) => !widget.hiddenColumns.contains(col),
     );
 
+    for (final column in visibleColumns) {
+      _columnWidths[column] = _getColumnWidth(column);
+    }
+
+    // Add action columns
+    _columnWidths['promote'] = 100.0;
+    _columnWidths['actions'] = 100.0;
+  }
+
+  @override
+  void dispose() {
+    _scrollTimer?.cancel();
+    _horizontalController.dispose();
+    super.dispose();
+  }
+
+  void _startContinuousScroll(ScrollController controller, double delta) {
+    _scrollTimer?.cancel();
+    _scrollTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      if (controller.hasClients) {
+        final newOffset = (controller.offset + delta).clamp(
+          0.0,
+          controller.position.maxScrollExtent,
+        );
+        controller.jumpTo(newOffset);
+      }
+    });
+  }
+
+  void _stopContinuousScroll() {
+    _scrollTimer?.cancel();
+    _scrollTimer = null;
+  }
+
+  // Method to get filtered data for export
+  List<Map<String, dynamic>> getFilteredDataForExport() {
+    final effectiveRows = _dataSource.effectiveRows;
+    final filteredData = <Map<String, dynamic>>[];
+
+    // Extract data from each filtered row
+    for (final row in effectiveRows) {
+      final data = <String, dynamic>{};
+      final cells = row.getCells();
+
+      for (int i = 0; i < cells.length && i < widget.columns.length; i++) {
+        final cell = cells[i];
+        data[widget.columns[i]] = cell.value;
+      }
+
+      filteredData.add(data);
+    }
+
+    return filteredData;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return SfDataGridTheme(
       data: SfDataGridThemeData(
         headerColor: Colors.blue.shade700,
@@ -55,17 +178,20 @@ class PromotionDataGrid extends StatelessWidget {
         selectionColor: Colors.grey.shade400,
         filterIconColor: Colors.white,
         sortIconColor: Colors.white,
+        columnDragIndicatorColor: Colors.black,
+        columnDragIndicatorStrokeWidth: 4,
       ),
       child: Padding(
         padding: const EdgeInsets.all(8.0),
         child: Stack(
+          clipBehavior: Clip.none,
           children: [
             SfDataGrid(
-              source: dataSource,
-              columnWidthMode: ColumnWidthMode.fill, // Changed to fill
-              columnWidthCalculationRange: ColumnWidthCalculationRange.allRows,
+              source: _dataSource, // Use the stored data source
+              columnWidthMode: ColumnWidthMode.none,
               allowSorting: true,
               allowFiltering: true,
+              allowColumnsDragging: true,
               selectionMode: SelectionMode.single,
               showHorizontalScrollbar: true,
               showVerticalScrollbar: true,
@@ -74,44 +200,88 @@ class PromotionDataGrid extends StatelessWidget {
               headerGridLinesVisibility: GridLinesVisibility.both,
               rowHeight: 60,
               headerRowHeight: 65,
-              onCellSecondaryTap: (details) {
-                if (details.column.columnName != 'actions') {
-                  final rowIndex = details.rowColumnIndex.rowIndex - 1;
-                  if (rowIndex >= 0 && rowIndex < data.length) {
-                    final cellValue =
-                        data[rowIndex][details.column.columnName]?.toString() ??
-                        '';
-
-                    // Add to clipboard collection instead of replacing
-                    dataSource.addToClipboard(cellValue);
-                    final allValues = dataSource.getSelectedCellsAsText();
-                    Clipboard.setData(ClipboardData(text: allValues));
-                    onCopyCellContent(
-                      'تم إضافة إلى الحافظة (${dataSource.clipboardValuesCount} عنصر)',
-                    );
-                  }
-                }
+              allowColumnsResizing: true,
+              columnResizeMode: ColumnResizeMode.onResize,
+              columnDragFeedbackBuilder: (context, column) {
+                return Container(
+                  width: _columnWidths[column.columnName] ?? 180,
+                  height: 50,
+                  color: AppColors.primaryColor,
+                  child: Center(
+                    child: Text(
+                      column.columnName,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        decoration: TextDecoration.none,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                );
               },
-              onCellDoubleTap: (details) {
-                if (details.column.columnName != 'actions') {
-                  final rowIndex = details.rowColumnIndex.rowIndex - 1;
-                  if (rowIndex >= 0 && rowIndex < data.length) {
-                    final cellValue =
-                        data[rowIndex][details.column.columnName]?.toString() ??
-                        '';
-
-                    // Clear clipboard and copy only this cell
-                    dataSource.clearSelection();
-                    Clipboard.setData(ClipboardData(text: cellValue));
-                    onCopyCellContent('تم نسخ: $cellValue');
-                  }
-                }
+              onFilterChanged: (DataGridFilterChangeDetails details) {
+                // Update filtered count and notify parent
+                final filteredCount = _dataSource.effectiveRows.length;
+                widget.onFilterChanged?.call(filteredCount);
+                // Force a rebuild to refresh the UI
+                setState(() {});
               },
-              verticalScrollController: scrollController,
+              onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
+                setState(() {
+                  _columnWidths[details.column.columnName] = details.width;
+                });
+                return true;
+              },
+              onColumnDragging: (DataGridColumnDragDetails details) {
+                if (widget.onColumnDragging != null) {
+                  return widget.onColumnDragging!(details);
+                }
+                return true;
+              },
               columns: _buildGridColumns(),
             ),
-            if (isLoadingMore) _buildLoadingIndicator(),
+            if (widget.isLoadingMore) _buildLoadingIndicator(),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingIndicator() {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        alignment: Alignment.center,
+        color: Colors.black.withAlpha(50),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withAlpha(100), blurRadius: 8),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.blue.shade700,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text('جاري تحميل المزيد...'),
+            ],
+          ),
         ),
       ),
     );
@@ -119,21 +289,18 @@ class PromotionDataGrid extends StatelessWidget {
 
   List<GridColumn> _buildGridColumns() {
     final visibleColumns =
-        columns.where((col) => !hiddenColumns.contains(col)).map((column) {
-          double minWidth = _getColumnWidth(
-            column,
-          ); // Add back minimum width calculation
-
+        widget.columns.where((col) => !widget.hiddenColumns.contains(col)).map((
+          column,
+        ) {
           return GridColumn(
             columnName: column,
-            columnWidthMode: ColumnWidthMode.auto,
-            minimumWidth: minWidth, // Restore minimum width
-            autoFitPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+            minimumWidth: 20,
+            width: _columnWidths[column] ?? _getColumnWidth(column),
             label: Container(
               padding: const EdgeInsets.all(8.0),
               alignment: Alignment.center,
               child: Text(
-                columnNames[column] ?? column,
+                widget.columnNames[column] ?? column,
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
@@ -146,12 +313,13 @@ class PromotionDataGrid extends StatelessWidget {
           );
         }).toList();
 
-    // Add action columns with fixed widths
+    // Add action columns with stored widths
     if (visibleColumns.isNotEmpty) {
       visibleColumns.add(
         GridColumn(
           columnName: 'promote',
-          width: 100.0,
+          minimumWidth: 100,
+          width: _columnWidths['promote'] ?? 100.0,
           allowSorting: false,
           allowFiltering: false,
           label: Container(
@@ -172,7 +340,8 @@ class PromotionDataGrid extends StatelessWidget {
       visibleColumns.add(
         GridColumn(
           columnName: 'actions',
-          width: 100.0,
+          width: _columnWidths['actions'] ?? 100.0,
+          minimumWidth: 100,
           allowSorting: false,
           allowFiltering: false,
           label: Container(
@@ -198,7 +367,7 @@ class PromotionDataGrid extends StatelessWidget {
   double _getColumnWidth(String column) {
     switch (column) {
       case 'Badge_NO':
-        return 120;
+        return 180;
       case 'Employee_Name':
         return 200;
       case 'Bus_Line':
@@ -208,64 +377,59 @@ class PromotionDataGrid extends StatelessWidget {
         return 180.0;
       case 'Status':
       case 'Grade':
-        return 100.0;
       case 'Adjusted_Eligible_Date':
       case 'Last_Promotion_Dt':
-        return 150.0;
-
       case 'New_Basic':
-        return 120.0;
       case 'Next_Grade':
-        return 100.0;
       case '4% Adj':
       case 'Annual_Increment':
-        return 130.0;
       case 'Grade_Range':
       case 'Promotion_Band':
-        return 140.0;
+        return 150.0;
       case 'Prom_Reason':
         return 200.0;
-      default:
+      // Add widths for the new remaining columns
+      case 'Age__Hijra_':
+      case 'Age__Gregorian_':
         return 120.0;
+      case 'OrgUnit4':
+      case 'OrgUnit1':
+        return 140.0;
+      case 'Position_Abbrv':
+        return 120.0;
+      case 'Certificate':
+      case 'Educational_Est':
+      case 'Institute_Location':
+        return 180.0;
+      case 'Date_of_Join':
+      case 'Due_Date':
+      case 'Recommended_Date':
+      case 'Eligible_Date':
+      case 'Retirement_Date__Grego_':
+        return 160.0;
+      case 'Nationality':
+        return 120.0;
+      case 'Service_in_KJO':
+      case 'Period_Since_Last_Promotion':
+      case 'Calculated_Year_for_Promotion':
+        return 180.0;
+      case 'Appraisal1':
+      case 'Appraisal2':
+      case 'Appraisal3':
+      case 'Appraisal4':
+      case 'Appraisal5':
+        return 120.0;
+      case 'GAP':
+        return 100.0;
+      case 'Meet_Requirement':
+        return 140.0;
+      case 'Missing_criteria':
+        return 160.0;
+      case 'Pay_scale_area_text':
+        return 180.0;
+      default:
+        return 160; // Default width for any other columns
     }
-  }
-
-  Widget _buildLoadingIndicator() {
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 0,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        alignment: Alignment.center,
-        color: Colors.black.withOpacity(0.05),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.blue.shade700,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text('جاري تحميل المزيد...'),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -344,6 +508,18 @@ class _PromotionDataSource extends DataGridSource {
     }
 
     final record = _data[rowIndex];
+    final isHighlighted = record['_highlighted'] == true;
+    final validationType = record['_validation_type']?.toString() ?? '';
+
+    // Parse validation types - handle multiple validation types separated by comma
+    final validationTypes =
+        validationType.split(',').map((e) => e.trim()).toSet();
+    final hasBasicValidation = validationTypes.contains('basic_validation');
+    final hasDateValidation = validationTypes.contains('date_validation');
+
+    print(
+      'Building row for record: Badge=${record['Badge_NO']}, highlighted=$isHighlighted, validationTypes=$validationTypes',
+    ); // Debug
 
     final cells =
         row.getCells().map<Widget>((dataGridCell) {
@@ -352,13 +528,21 @@ class _PromotionDataSource extends DataGridSource {
           // Check if this is the Adjusted_Eligible_Date column
           if (dataGridCell.columnName == 'Adjusted_Eligible_Date' &&
               onUpdateAdjustedDate != null) {
+            // Check if this cell should be highlighted for date validation
+            final shouldHighlightDate = isHighlighted && hasDateValidation;
+
             cellWidget = Container(
               alignment: Alignment.center,
               padding: const EdgeInsets.all(8.0),
               child: InkWell(
                 onTap:
-                    () =>
-                        _showDatePicker(record, dataGridCell.value.toString()),
+                    onUpdateAdjustedDate != null
+                        ? () => _showDatePicker(
+                          record,
+                          dataGridCell.value.toString(),
+                        )
+                        : null,
+
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -366,9 +550,18 @@ class _PromotionDataSource extends DataGridSource {
                     vertical: 8,
                   ),
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.blue.shade300),
+                    border: Border.all(
+                      color:
+                          shouldHighlightDate
+                              ? Colors.redAccent.shade400
+                              : Colors.blue.shade300,
+                      width: shouldHighlightDate ? 2 : 1,
+                    ),
                     borderRadius: BorderRadius.circular(6),
-                    color: Colors.blue.shade50,
+                    color:
+                        shouldHighlightDate
+                            ? Colors.red.withAlpha(50)
+                            : Colors.blue.shade50,
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -376,7 +569,10 @@ class _PromotionDataSource extends DataGridSource {
                       Icon(
                         Icons.calendar_today,
                         size: 18,
-                        color: Colors.blue.shade700,
+                        color:
+                            shouldHighlightDate
+                                ? Colors.redAccent.shade700
+                                : Colors.blue.shade700,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -387,7 +583,9 @@ class _PromotionDataSource extends DataGridSource {
                           style: TextStyle(
                             fontSize: 14,
                             color:
-                                dataGridCell.value.toString().isNotEmpty
+                                shouldHighlightDate
+                                    ? Colors.redAccent.shade700
+                                    : dataGridCell.value.toString().isNotEmpty
                                     ? Colors.blue.shade700
                                     : Colors.grey.shade600,
                             fontWeight: FontWeight.w500,
@@ -464,15 +662,44 @@ class _PromotionDataSource extends DataGridSource {
               ),
             );
           } else {
+            // Check if this specific cell should be highlighted (Old Basic validation)
+            final shouldHighlightBasic =
+                isHighlighted &&
+                hasBasicValidation &&
+                dataGridCell.columnName == 'Basic';
+
+            print(
+              'Cell ${dataGridCell.columnName}: shouldHighlightBasic=$shouldHighlightBasic (highlighted=$isHighlighted, hasBasicValidation=$hasBasicValidation)',
+            ); // Debug
+
             cellWidget = Container(
               alignment: Alignment.center,
               padding: const EdgeInsets.all(8.0),
+              decoration:
+                  shouldHighlightBasic
+                      ? BoxDecoration(
+                        color: Colors.red.shade100,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: Colors.red.shade300,
+                          width: 2, // Make border more visible
+                        ),
+                      )
+                      : null,
               child: Text(
                 _formatDisplayValue(
                   dataGridCell.columnName,
                   dataGridCell.value.toString(),
                 ),
-                style: const TextStyle(fontSize: 14),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight:
+                      shouldHighlightBasic
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                  color:
+                      shouldHighlightBasic ? Colors.red.shade700 : Colors.black,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
@@ -540,10 +767,10 @@ class _PromotionDataSource extends DataGridSource {
       ),
     );
 
-    return DataGridRowAdapter(
-      color: rowIndex % 2 == 0 ? Colors.white : Colors.blue.shade50,
-      cells: cells,
-    );
+    // Use standard alternating row colors like view data screen
+    Color rowColor = rowIndex % 2 == 0 ? Colors.white : Colors.grey.shade50;
+
+    return DataGridRowAdapter(color: rowColor, cells: cells);
   }
 
   void _showDatePicker(Map<String, dynamic> record, String currentDate) async {
@@ -555,7 +782,6 @@ class _PromotionDataSource extends DataGridSource {
 
     if (badgeNo.isEmpty || onUpdateAdjustedDate == null) return;
 
-    // Simply call the callback - let the parent handle the date picker
     onUpdateAdjustedDate!(badgeNo, currentDate);
   }
 

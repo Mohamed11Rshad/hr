@@ -25,12 +25,149 @@ class ExcelService {
       // Check if table exists, create it if it doesn't
       await _createTableIfNotExists(tableName, headers);
 
-      // Insert data without clearing the table first
-      final insertedCount = await _insertData(tableName, rows, headers);
-      result = 'تمت الإضافة لجدول "$tableName" المضاف: $insertedCount';
+      // Insert data and get counts
+      final counts = await _insertDataWithCounts(tableName, rows, headers);
+      final insertedCount = counts['inserted'] ?? 0;
+      final updatedCount = counts['updated'] ?? 0;
+      
+      if (insertedCount > 0 && updatedCount > 0) {
+        result = 'تمت معالجة جدول "$tableName" - المضاف: $insertedCount، المحدث: $updatedCount';
+      } else if (insertedCount > 0) {
+        result = 'تمت الإضافة لجدول "$tableName" المضاف: $insertedCount';
+      } else if (updatedCount > 0) {
+        result = 'تم تحديث جدول "$tableName" المحدث: $updatedCount';
+      } else {
+        result = 'لا توجد تغييرات في جدول "$tableName"';
+      }
       break; // Only process first sheet
     }
     return result;
+  }
+
+  Future<Map<String, int>> _insertDataWithCounts(
+    String tableName,
+    List<List<Data?>> rows,
+    List<String> headers,
+  ) async {
+    int insertedCount = 0;
+    int updatedCount = 0;
+    final existingRecords = await _getExistingRecords(tableName);
+
+    // Find the Badge NO column index
+    final badgeNoIndex = headers.indexWhere(
+      (header) => header.toLowerCase().contains('badge'),
+    );
+
+    // Add current date and time with custom format
+    final now = DateTime.now();
+    final hour =
+        now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour);
+    final formattedDate =
+        '${now.year}-${now.month}-${now.day} $hour:${now.minute.toString().padLeft(2, '0')}${now.hour >= 12 ? "pm" : "am"}';
+
+    // Group existing records by Badge NO for faster lookup
+    final Map<String, List<Map<String, dynamic>>> existingByBadgeNo = {};
+    String? badgeNoColumnSanitized;
+
+    if (badgeNoIndex >= 0) {
+      final badgeNoColumn = headers[badgeNoIndex];
+      badgeNoColumnSanitized = _escapeColumnName(
+        badgeNoColumn,
+      ).replaceAll('"', '');
+
+      for (final record in existingRecords) {
+        final badgeNo = record[badgeNoColumnSanitized]?.toString() ?? '';
+        if (badgeNo.isNotEmpty) {
+          existingByBadgeNo.putIfAbsent(badgeNo, () => []).add(record);
+        }
+      }
+    }
+
+    // Process data in chunks to prevent UI blocking
+    const int chunkSize = 500;
+
+    for (
+      int startIndex = 1;
+      startIndex < rows.length;
+      startIndex += chunkSize
+    ) {
+      final endIndex = (startIndex + chunkSize).clamp(0, rows.length);
+      final batch = db.batch();
+
+      for (int i = startIndex; i < endIndex; i++) {
+        final values = <String, dynamic>{'upload_date': formattedDate};
+        bool hasData = false;
+        String? badgeNo;
+
+        // Build record from row
+        for (int j = 0; j < headers.length && j < rows[i].length; j++) {
+          final value = rows[i][j]?.value?.toString();
+          if (value != null) {
+            final columnName = _escapeColumnName(
+              headers[j],
+            ).replaceAll('"', '');
+            values[columnName] = value;
+            hasData = true;
+
+            if (j == badgeNoIndex) {
+              badgeNo = value;
+            }
+          }
+        }
+
+        if (hasData) {
+          bool shouldInsert = true;
+          int? existingRecordId;
+
+          if (badgeNo != null &&
+              badgeNoColumnSanitized != null &&
+              existingByBadgeNo.containsKey(badgeNo)) {
+            final recordsWithSameBadgeNo = existingByBadgeNo[badgeNo]!;
+
+            for (final existingRecord in recordsWithSameBadgeNo) {
+              bool isDuplicate = true;
+
+              for (final key in values.keys) {
+                if (key == 'upload_date' || key == 'id') continue;
+
+                if (values[key]?.toString() !=
+                    existingRecord[key]?.toString()) {
+                  isDuplicate = false;
+                  break;
+                }
+              }
+
+              if (isDuplicate) {
+                shouldInsert = false;
+                existingRecordId = existingRecord['id'] as int?;
+                break;
+              }
+            }
+          }
+
+          if (shouldInsert) {
+            batch.insert(tableName, values);
+            insertedCount++;
+          } else if (existingRecordId != null) {
+            batch.update(
+              tableName,
+              {'upload_date': formattedDate},
+              where: 'id = ?',
+              whereArgs: [existingRecordId],
+            );
+            updatedCount++;
+          }
+        }
+      }
+
+      await batch.commit(noResult: true);
+
+      if (endIndex < rows.length) {
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+    }
+
+    return {'inserted': insertedCount, 'updated': updatedCount};
   }
 
   // New method to create table only if it doesn't exist
@@ -85,6 +222,7 @@ class ExcelService {
     List<String> headers,
   ) async {
     int insertedCount = 0;
+    int updatedCount = 0;
     final existingRecords = await _getExistingRecords(tableName);
 
     // Find the Badge NO column index
@@ -153,6 +291,7 @@ class ExcelService {
 
         if (hasData) {
           bool shouldInsert = true;
+          int? existingRecordId;
 
           // Check if this record is a duplicate based on Badge NO and other fields
           if (badgeNo != null &&
@@ -176,6 +315,7 @@ class ExcelService {
 
               if (isDuplicate) {
                 shouldInsert = false;
+                existingRecordId = existingRecord['id'] as int?;
                 break;
               }
             }
@@ -184,6 +324,15 @@ class ExcelService {
           if (shouldInsert) {
             batch.insert(tableName, values);
             insertedCount++;
+          } else if (existingRecordId != null) {
+            // Update the upload_date for the existing record
+            batch.update(
+              tableName,
+              {'upload_date': formattedDate},
+              where: 'id = ?',
+              whereArgs: [existingRecordId],
+            );
+            updatedCount++;
           }
         }
       }
@@ -197,7 +346,7 @@ class ExcelService {
       }
     }
 
-    return insertedCount;
+    return insertedCount; // You could return both insertedCount and updatedCount if needed
   }
 
   // Add these helper methods

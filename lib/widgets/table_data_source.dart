@@ -34,11 +34,24 @@ class TableDataSource extends DataGridSource {
                     final value = mutableRow[column]?.toString() ?? '';
                     if (value.isNotEmpty) {
                       try {
+                        // Format upload_date to match Base_Sheet format: 2025-6-17 11:33pm
                         final dateTime = DateTime.parse(value);
+                        final year = dateTime.year;
+                        final month = dateTime.month;
+                        final day = dateTime.day;
+                        final hour =
+                            dateTime.hour > 12
+                                ? dateTime.hour - 12
+                                : (dateTime.hour == 0 ? 12 : dateTime.hour);
+                        final minute = dateTime.minute.toString().padLeft(
+                          2,
+                          '0',
+                        );
+                        final period = dateTime.hour >= 12 ? 'pm' : 'am';
+
                         return DataGridCell<String>(
                           columnName: column,
-                          value:
-                              '${dateTime.toLocal().toString().split('.')[0]}',
+                          value: '$year-$month-$day $hour:$minute$period',
                         );
                       } catch (e) {
                         return DataGridCell<String>(
@@ -88,7 +101,7 @@ class TableDataSource extends DataGridSource {
 
     // Add safety check for valid data
     if (rowIndex < 0 || rowIndex >= _data.length) {
-      // Return empty row adapter if data is out of bounds
+      // Return empty row adapter with correct number of cells matching columns
       return DataGridRowAdapter(
         color: Colors.white,
         cells: List.generate(_columns.length + 1, (index) => Container()),
@@ -142,8 +155,8 @@ class TableDataSource extends DataGridSource {
           );
         }).toList();
 
-    // Add delete button for actions column - only if we have columns
-    if (_columns.isNotEmpty) {
+    // Add delete button for actions column - only if we have columns and onDeleteRecord is provided
+    if (_columns.isNotEmpty && onDeleteRecord != null) {
       cells.add(
         Container(
           alignment: Alignment.center,

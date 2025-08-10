@@ -20,8 +20,37 @@ class TransfersDataService {
           created_date TEXT DEFAULT CURRENT_TIMESTAMP
         )
       ''');
+
+      // Initialize transferred employees table
+      await _initializeTransferredTable();
     } catch (e) {
       print('Error creating transfers table: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> _initializeTransferredTable() async {
+    try {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS transferred_employees (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          Badge_NO TEXT NOT NULL,
+          Employee_Name TEXT,
+          Grade TEXT,
+          Old_Position_Code TEXT,
+          Old_Position TEXT,
+          Current_Position_Code TEXT,
+          Current_Position TEXT,
+          Transfer_Type TEXT,
+          POD TEXT,
+          ERD TEXT,
+          Available_in_ERD TEXT,
+          transferred_date TEXT NOT NULL,
+          created_date TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      ''');
+    } catch (e) {
+      print('Error creating transferred_employees table: $e');
       rethrow;
     }
   }
@@ -88,7 +117,7 @@ class TransfersDataService {
 
   Future<bool> _validatePositionExists(String positionCode) async {
     try {
-      // Check if Staff_Assignments table exists
+      // Check if Staff_Assignments table exists (table name has underscore)
       final tableExists = await db.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name = 'Staff_Assignments'",
       );
@@ -125,8 +154,11 @@ class TransfersDataService {
 
   Future<List<Map<String, dynamic>>> getTransfersData() async {
     try {
-      // Get all transfers from transfers table
-      final transfers = await db.query('transfers', orderBy: 'S_NO');
+      // Get all transfers from transfers table ordered by Badge_NO
+      final transfers = await db.query(
+        'transfers',
+        orderBy: 'CAST(Badge_NO AS INTEGER) ASC',
+      );
 
       if (transfers.isEmpty) {
         return [];
@@ -171,8 +203,6 @@ class TransfersDataService {
           mutableTransfer['OrgUnit_Description'] =
               positionData['OrgUnit_Description'] ?? '';
           mutableTransfer['Grade_Range6'] = positionData['Grade_Range'] ?? '';
-          mutableTransfer['Occupancy'] = positionData['Occupancy'] ?? '';
-          mutableTransfer['Badge_Number'] = positionData['Badge_Number'] ?? '';
 
           // Calculate New Bus Line based on Dept value
           mutableTransfer['New_Bus_Line'] = await _getBusLineFromDept(
@@ -190,6 +220,13 @@ class TransfersDataService {
             mutableTransfer['Grade_Range']?.toString() ?? '',
             mutableTransfer['Grade_Range6']?.toString() ?? '',
           );
+
+          // Check position occupancy in base sheet instead of Staff_Assignments
+          final occupancyData = await _checkPositionOccupancyInBaseSheet(
+            positionCode,
+          );
+          mutableTransfer['Occupancy'] = occupancyData['occupancy'];
+          mutableTransfer['Badge_Number'] = occupancyData['badgeNumber'];
         } else {
           // Set empty values if position not found
           mutableTransfer['Dept'] = '';
@@ -198,10 +235,15 @@ class TransfersDataService {
           mutableTransfer['New_Bus_Line'] = '';
           mutableTransfer['OrgUnit_Description'] = '';
           mutableTransfer['Grade_Range6'] = '';
-          mutableTransfer['Occupancy'] = '';
-          mutableTransfer['Badge_Number'] = '';
           mutableTransfer['Grade_GAP'] = '';
           mutableTransfer['Transfer_Type'] = '';
+
+          // For position not found in Staff_Assignments, still check base sheet
+          final occupancyData = await _checkPositionOccupancyInBaseSheet(
+            positionCode,
+          );
+          mutableTransfer['Occupancy'] = occupancyData['occupancy'];
+          mutableTransfer['Badge_Number'] = occupancyData['badgeNumber'];
         }
 
         processedData.add(mutableTransfer);
@@ -211,6 +253,482 @@ class TransfersDataService {
     } catch (e) {
       print('Error getting transfers data: $e');
       rethrow;
+    }
+  }
+
+  // Add new method to check position occupancy in base sheet
+  Future<Map<String, String>> _checkPositionOccupancyInBaseSheet(
+    String positionCode,
+  ) async {
+    try {
+      if (positionCode.isEmpty) {
+        return {'occupancy': 'Vacant', 'badgeNumber': ''};
+      }
+
+      // Check if any record in base sheet has this position code in Position_Abbrv column
+      final result = await db.query(
+        baseTableName,
+        where: '"Position_Abbrv" = ?',
+        whereArgs: [positionCode],
+        limit: 1,
+      );
+
+      if (result.isNotEmpty) {
+        // Position is occupied
+        final occupiedRecord = result.first;
+
+        // Find the badge column name
+        final tableInfo = await db.rawQuery(
+          'PRAGMA table_info("$baseTableName")',
+        );
+        final badgeColumn = tableInfo
+            .map((col) => col['name'].toString())
+            .firstWhere(
+              (name) => name.toLowerCase().contains('badge'),
+              orElse: () => 'Badge_NO',
+            );
+
+        final badgeNumber = occupiedRecord[badgeColumn]?.toString() ?? '';
+
+        return {'occupancy': 'Occupied', 'badgeNumber': badgeNumber};
+      } else {
+        // Position is vacant
+        return {'occupancy': 'Vacant', 'badgeNumber': ''};
+      }
+    } catch (e) {
+      print('Error checking position occupancy in base sheet: $e');
+      return {'occupancy': 'Vacant', 'badgeNumber': ''};
+    }
+  }
+
+  Future<Map<String, dynamic>?> _getEmployeeFromBaseSheet(
+    String badgeNo,
+  ) async {
+    try {
+      // Find the badge column in base table
+      final tableInfo = await db.rawQuery(
+        'PRAGMA table_info("$baseTableName")',
+      );
+      final badgeColumn = tableInfo
+          .map((col) => col['name'].toString())
+          .firstWhere(
+            (name) => name.toLowerCase().contains('badge'),
+            orElse: () => 'Badge_NO',
+          );
+
+      final result = await db.query(
+        baseTableName,
+        where: '"$badgeColumn" = ?',
+        whereArgs: [badgeNo],
+        limit: 1,
+      );
+
+      return result.isNotEmpty ? result.first : null;
+    } catch (e) {
+      print('Error getting employee from base sheet: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _getPositionFromStaffAssignments(
+    String positionCode,
+  ) async {
+    try {
+      // Check if Staff_Assignments table exists (table name has underscore)
+      final tableExists = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'Staff_Assignments'",
+      );
+
+      if (tableExists.isEmpty) {
+        return null;
+      }
+
+      // Query by Position_ID or Position_Code - try both since we're not sure which column exists
+      final result = await db.rawQuery(
+        '''
+        SELECT * FROM "Staff_Assignments"
+        WHERE "Position_ID" = ? OR "Position_Code" = ? OR "Position_Abbreviation" = ?
+        LIMIT 1
+      ''',
+        [positionCode, positionCode, positionCode],
+      );
+
+      return result.isNotEmpty ? result.first : null;
+    } catch (e) {
+      print('Error getting position from staff assignments: $e');
+      return null;
+    }
+  }
+
+  String _formatAsInteger(String value) {
+    if (value.isEmpty) {
+      return '';
+    }
+
+    try {
+      final doubleValue = double.tryParse(value) ?? 0;
+      return doubleValue.round().toString();
+    } catch (e) {
+      print('Error formatting as integer: $e');
+      return value; // Return original value if parsing fails
+    }
+  }
+
+  // Add method to update editable fields
+  Future<void> updateTransferField(
+    String sNo,
+    String fieldName,
+    String value,
+  ) async {
+    try {
+      // If Done/Yes/No is set to "Done", complete the transfer
+      if (fieldName == 'DONE_YES_NO' && value.toLowerCase() == 'done') {
+        await _completeTransfer(sNo);
+        return;
+      }
+
+      await db.update(
+        'transfers',
+        {fieldName: value},
+        where: 'S_NO = ?',
+        whereArgs: [sNo],
+      );
+    } catch (e) {
+      print('Error updating transfer field: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> _completeTransfer(String sNo) async {
+    try {
+      // Get the transfer record
+      final transferRecords = await db.query(
+        'transfers',
+        where: 'S_NO = ?',
+        whereArgs: [sNo],
+      );
+
+      if (transferRecords.isEmpty) {
+        throw Exception('Transfer record not found');
+      }
+
+      final transfer = transferRecords.first;
+      final badgeNo = transfer['Badge_NO']?.toString() ?? '';
+      final positionCode = transfer['Position_Code']?.toString() ?? '';
+
+      // Get employee data from base sheet
+      final baseData = await _getEmployeeFromBaseSheet(badgeNo);
+      if (baseData == null) {
+        throw Exception('Employee not found in base sheet');
+      }
+
+      // Get position data for both old and new positions
+      final oldPositionData = await _getPositionFromStaffAssignments(
+        baseData['Position_Abbrv']?.toString() ?? '',
+      );
+      final newPositionData = await _getPositionFromStaffAssignments(
+        positionCode,
+      );
+
+      // Calculate transfer type
+      final transferType = _calculateTransferType(
+        baseData['Grade_Range']?.toString() ?? '',
+        newPositionData?['Grade_Range']?.toString() ?? '',
+      );
+
+      final now = DateTime.now().toIso8601String();
+
+      // Insert into transferred_employees table
+      await db.insert('transferred_employees', {
+        'Badge_NO': badgeNo,
+        'Employee_Name': baseData['Employee_Name']?.toString() ?? '',
+        'Grade': baseData['Grade']?.toString() ?? '',
+        'Old_Position_Code': baseData['Position_Abbrv']?.toString() ?? '',
+        'Old_Position': baseData['Position_Text']?.toString() ?? '',
+        'Current_Position_Code': positionCode,
+        'Current_Position':
+            newPositionData?['Position_Description']?.toString() ?? '',
+        'Transfer_Type': transferType,
+        'POD': transfer['POD']?.toString() ?? '',
+        'ERD': transfer['ERD']?.toString() ?? '',
+        'Available_in_ERD': transfer['Available_in_ERD']?.toString() ?? '',
+        'transferred_date': now,
+        'created_date': now,
+      });
+
+      // Remove from transfers table
+      await db.delete('transfers', where: 'S_NO = ?', whereArgs: [sNo]);
+    } catch (e) {
+      print('Error completing transfer: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getTransferredEmployees({
+    required int limit,
+    required int offset,
+  }) async {
+    try {
+      final data = await db.query(
+        'transferred_employees',
+        orderBy: 'transferred_date DESC',
+        limit: limit,
+        offset: offset,
+      );
+
+      return data.map((row) => Map<String, dynamic>.from(row)).toList();
+    } catch (e) {
+      print('Error getting transferred employees: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> removeTransferredEmployee(
+    String badgeNo,
+    String transferredDate,
+  ) async {
+    try {
+      await db.delete(
+        'transferred_employees',
+        where: 'Badge_NO = ? AND transferred_date = ?',
+        whereArgs: [badgeNo, transferredDate],
+      );
+    } catch (e) {
+      print('Error removing transferred employee: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> clearAllTransfers() async {
+    try {
+      await db.delete('transfers', where: '1 = 1');
+    } catch (e) {
+      print('Error clearing all transfers: $e');
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> addMultipleTransfers(
+    List<Map<String, String>> transfers,
+  ) async {
+    final results = <String, dynamic>{
+      'successful': <String>[],
+      'failed': <Map<String, String>>[],
+      'duplicateEmployees': <String>[],
+      'invalidEmployees': <String>[],
+      'invalidPositions': <String>[],
+    };
+
+    try {
+      // Check for duplicate badge numbers in the request
+      final badgeNumbers = transfers.map((t) => t['badgeNo']!).toList();
+      final uniqueBadges = badgeNumbers.toSet();
+
+      if (uniqueBadges.length != badgeNumbers.length) {
+        final duplicates = <String>[];
+        final seen = <String>{};
+        for (final badge in badgeNumbers) {
+          if (seen.contains(badge)) {
+            duplicates.add(badge);
+          } else {
+            seen.add(badge);
+          }
+        }
+        throw Exception(
+          'أرقام الموظفين التالية مكررة في القائمة: ${duplicates.join(', ')}',
+        );
+      }
+
+      // Validate all employees exist
+      final validEmployees = await _validateMultipleEmployees(badgeNumbers);
+      final invalidEmployees =
+          badgeNumbers
+              .where((badge) => !validEmployees.contains(badge))
+              .toList();
+
+      // Validate all positions exist
+      final positionCodes = transfers.map((t) => t['positionCode']!).toList();
+      final validPositions = await _validateMultiplePositions(positionCodes);
+      final invalidPositions =
+          positionCodes
+              .where((position) => !validPositions.contains(position))
+              .toList();
+
+      results['invalidEmployees'] = invalidEmployees;
+      results['invalidPositions'] = invalidPositions;
+
+      // Check for existing transfers
+      final existingTransfers = await _checkExistingTransfers(badgeNumbers);
+      results['duplicateEmployees'] = existingTransfers;
+
+      // Process only valid transfers
+      final batch = db.batch();
+      final now = DateTime.now().toIso8601String();
+
+      for (final transfer in transfers) {
+        final badgeNo = transfer['badgeNo']!;
+        final positionCode = transfer['positionCode']!;
+
+        // Skip if employee doesn't exist, position doesn't exist, or transfer already exists
+        if (invalidEmployees.contains(badgeNo) ||
+            invalidPositions.contains(positionCode) ||
+            existingTransfers.contains(badgeNo)) {
+          results['failed'].add({
+            'badgeNo': badgeNo,
+            'positionCode': positionCode,
+            'reason': _getFailureReason(
+              badgeNo,
+              positionCode,
+              invalidEmployees,
+              invalidPositions,
+              existingTransfers,
+            ),
+          });
+          continue;
+        }
+
+        // Add to batch
+        batch.insert('transfers', {
+          'Badge_NO': badgeNo,
+          'Position_Code': positionCode,
+          'POD': '',
+          'ERD': '',
+          'DONE_YES_NO': '',
+          'Available_in_ERD': '',
+          'created_date': now,
+        });
+
+        results['successful'].add(badgeNo);
+      }
+
+      // Execute batch
+      await batch.commit();
+
+      return results;
+    } catch (e) {
+      print('Error adding multiple transfers: $e');
+      rethrow;
+    }
+  }
+
+  String _getFailureReason(
+    String badgeNo,
+    String positionCode,
+    List<String> invalidEmployees,
+    List<String> invalidPositions,
+    List<String> existingTransfers,
+  ) {
+    final reasons = <String>[];
+
+    if (invalidEmployees.contains(badgeNo)) {
+      reasons.add('الموظف غير موجود');
+    }
+
+    if (invalidPositions.contains(positionCode)) {
+      reasons.add('كود الوظيفة غير موجود');
+    }
+
+    if (existingTransfers.contains(badgeNo)) {
+      reasons.add('التنقل موجود مسبقاً');
+    }
+
+    return reasons.join(', ');
+  }
+
+  Future<List<String>> _validateMultipleEmployees(
+    List<String> badgeNumbers,
+  ) async {
+    if (badgeNumbers.isEmpty) return [];
+
+    try {
+      // Find the badge column in base table
+      final tableInfo = await db.rawQuery(
+        'PRAGMA table_info("$baseTableName")',
+      );
+      final badgeColumn = tableInfo
+          .map((col) => col['name'].toString())
+          .firstWhere(
+            (name) => name.toLowerCase().contains('badge'),
+            orElse: () => 'Badge_NO',
+          );
+
+      final placeholders = badgeNumbers.map((_) => '?').join(',');
+      final result = await db.rawQuery(
+        'SELECT DISTINCT "$badgeColumn" FROM "$baseTableName" WHERE "$badgeColumn" IN ($placeholders)',
+        badgeNumbers,
+      );
+
+      return result
+          .map((row) => row[badgeColumn]?.toString() ?? '')
+          .where((badge) => badge.isNotEmpty)
+          .toList();
+    } catch (e) {
+      print('Error validating multiple employees: $e');
+      return [];
+    }
+  }
+
+  Future<List<String>> _validateMultiplePositions(
+    List<String> positionCodes,
+  ) async {
+    if (positionCodes.isEmpty) return [];
+
+    try {
+      // Check if Staff_Assignments table exists
+      final tableExists = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'Staff_Assignments'",
+      );
+
+      if (tableExists.isEmpty) {
+        return [];
+      }
+
+      final placeholders = positionCodes.map((_) => '?').join(',');
+      final result = await db.rawQuery(
+        '''
+        SELECT DISTINCT "Position_Abbreviation" FROM "Staff_Assignments"
+        WHERE "Position_ID" IN ($placeholders) 
+           OR "Position_Code" IN ($placeholders) 
+           OR "Position_Abbreviation" IN ($placeholders)
+      ''',
+        [...positionCodes, ...positionCodes, ...positionCodes],
+      );
+
+      final validPositions =
+          result
+              .map((row) => row['Position_Abbreviation']?.toString() ?? '')
+              .where((position) => position.isNotEmpty)
+              .toSet();
+
+      // Return positions that exist in the input list
+      return positionCodes
+          .where((position) => validPositions.contains(position))
+          .toList();
+    } catch (e) {
+      print('Error validating multiple positions: $e');
+      return [];
+    }
+  }
+
+  Future<List<String>> _checkExistingTransfers(
+    List<String> badgeNumbers,
+  ) async {
+    if (badgeNumbers.isEmpty) return [];
+
+    try {
+      final placeholders = badgeNumbers.map((_) => '?').join(',');
+      final result = await db.rawQuery(
+        'SELECT DISTINCT Badge_NO FROM transfers WHERE Badge_NO IN ($placeholders)',
+        badgeNumbers,
+      );
+
+      return result
+          .map((row) => row['Badge_NO']?.toString() ?? '')
+          .where((badge) => badge.isNotEmpty)
+          .toList();
+    } catch (e) {
+      print('Error checking existing transfers: $e');
+      return [];
     }
   }
 
@@ -308,98 +826,6 @@ class TransfersDataService {
     } catch (e) {
       print('Error calculating transfer type: $e');
       return '';
-    }
-  }
-
-  Future<Map<String, dynamic>?> _getEmployeeFromBaseSheet(
-    String badgeNo,
-  ) async {
-    try {
-      // Find the badge column in base table
-      final tableInfo = await db.rawQuery(
-        'PRAGMA table_info("$baseTableName")',
-      );
-      final badgeColumn = tableInfo
-          .map((col) => col['name'].toString())
-          .firstWhere(
-            (name) => name.toLowerCase().contains('badge'),
-            orElse: () => 'Badge_NO',
-          );
-
-      final result = await db.query(
-        baseTableName,
-        where: '"$badgeColumn" = ?',
-        whereArgs: [badgeNo],
-        limit: 1,
-      );
-
-      return result.isNotEmpty ? result.first : null;
-    } catch (e) {
-      print('Error getting employee from base sheet: $e');
-      return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> _getPositionFromStaffAssignments(
-    String positionCode,
-  ) async {
-    try {
-      // Check if Staff_Assignments table exists
-      final tableExists = await db.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'Staff_Assignments'",
-      );
-
-      if (tableExists.isEmpty) {
-        return null;
-      }
-
-      // Query by Position_ID or Position_Code - try both since we're not sure which column exists
-      final result = await db.rawQuery(
-        '''
-        SELECT * FROM "Staff_Assignments"
-        WHERE "Position_ID" = ? OR "Position_Code" = ? OR "Position_Abbreviation" = ?
-        LIMIT 1
-      ''',
-        [positionCode, positionCode, positionCode],
-      );
-
-      return result.isNotEmpty ? result.first : null;
-    } catch (e) {
-      print('Error getting position from staff assignments: $e');
-      return null;
-    }
-  }
-
-  String _formatAsInteger(String value) {
-    if (value.isEmpty) {
-      return '';
-    }
-
-    try {
-      final doubleValue = double.tryParse(value) ?? 0;
-      return doubleValue.round().toString();
-    } catch (e) {
-      print('Error formatting as integer: $e');
-      return value; // Return original value if parsing fails
-    }
-  }
-
-  // Add method to update editable fields
-  Future<void> updateTransferField(
-    String sNo,
-    String fieldName,
-    String value,
-  ) async {
-    try {
-      await db.update(
-        'transfers',
-        {fieldName: value},
-        where: 'S_NO = ?',
-        whereArgs: [sNo],
-      );
-    } catch (e) {
-      print('Error updating transfer field: $e');
-      rethrow;
     }
   }
 }

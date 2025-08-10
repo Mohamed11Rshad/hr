@@ -22,15 +22,25 @@ class PromotionsDataService {
         )
       ''');
 
-      // Check if Prom_Reason column exists, if not add it
-      try {
-        await db.execute('''
-          ALTER TABLE promotions ADD COLUMN Prom_Reason TEXT
-        ''');
-      } catch (e) {
-        // Column might already exist, ignore error
-        print('Prom_Reason column might already exist: $e');
+      // Check if columns exist before adding them
+      final tableInfo = await db.rawQuery('PRAGMA table_info(promotions)');
+      final existingColumns =
+          tableInfo.map((col) => col['name'].toString()).toSet();
+
+      // Add Prom_Reason column if it doesn't exist
+      if (!existingColumns.contains('Prom_Reason')) {
+        try {
+          await db.execute('''
+            ALTER TABLE promotions ADD COLUMN Prom_Reason TEXT
+          ''');
+          print('Added Prom_Reason column to promotions table');
+        } catch (e) {
+          print('Error adding Prom_Reason column: $e');
+        }
       }
+
+      // Remove highlighted and validation_type columns as we do real-time validation
+      // They are no longer needed
 
       // Initialize promoted employees table
       await _initializePromotedTable();
@@ -49,7 +59,6 @@ class PromotionsDataService {
           Employee_Name TEXT,
           Grade TEXT,
           Status TEXT,
-          Adjusted_Eligible_Date TEXT,
           Last_Promotion_Dt TEXT,
           Prom_Reason TEXT,
           promoted_date TEXT NOT NULL,
@@ -75,6 +84,53 @@ class PromotionsDataService {
       } catch (e) {
         print('Status column might already exist in promoted_employees: $e');
       }
+
+      // Remove Adjusted_Eligible_Date column if it exists (since we don't need it anymore)
+      try {
+        // Check if the column exists first
+        final tableInfo = await db.rawQuery(
+          'PRAGMA table_info(promoted_employees)',
+        );
+        final hasAdjustedEligibleDate = tableInfo.any(
+          (col) => col['name'] == 'Adjusted_Eligible_Date',
+        );
+
+        if (hasAdjustedEligibleDate) {
+          // SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
+          await db.execute('''
+            CREATE TABLE promoted_employees_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              Badge_NO TEXT NOT NULL,
+              Employee_Name TEXT,
+              Grade TEXT,
+              Status TEXT,
+              Last_Promotion_Dt TEXT,
+              Prom_Reason TEXT,
+              promoted_date TEXT NOT NULL,
+              created_date TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+          ''');
+
+          // Copy data from old table to new table (excluding Adjusted_Eligible_Date)
+          await db.execute('''
+            INSERT INTO promoted_employees_new (id, Badge_NO, Employee_Name, Grade, Status, Last_Promotion_Dt, Prom_Reason, promoted_date, created_date)
+            SELECT id, Badge_NO, Employee_Name, Grade, Status, Last_Promotion_Dt, Prom_Reason, promoted_date, created_date
+            FROM promoted_employees
+          ''');
+
+          // Drop old table and rename new table
+          await db.execute('DROP TABLE promoted_employees');
+          await db.execute(
+            'ALTER TABLE promoted_employees_new RENAME TO promoted_employees',
+          );
+
+          print(
+            'Removed Adjusted_Eligible_Date column from promoted_employees table',
+          );
+        }
+      } catch (e) {
+        print('Error handling Adjusted_Eligible_Date column: $e');
+      }
     } catch (e) {
       print('Error creating promoted_employees table: $e');
       rethrow;
@@ -97,7 +153,8 @@ class PromotionsDataService {
         limit: 1,
       );
 
-      final adjustedDate =
+      // Use the adjusted eligible date from promotions table as the last promotion date
+      final lastPromotionDate =
           promotionData.isNotEmpty
               ? promotionData.first['Adjusted_Eligible_Date']?.toString() ?? ''
               : baseData['Adjusted_Eligible_Date']?.toString() ?? '';
@@ -116,13 +173,14 @@ class PromotionsDataService {
       final now = DateTime.now().toIso8601String();
 
       // Insert into promoted_employees table with proper status
+      // Note: Removed Adjusted_Eligible_Date and use the promotions adjusted date as Last_Promotion_Dt
       await db.insert('promoted_employees', {
         'Badge_NO': badgeNo,
         'Employee_Name': baseData['Employee_Name']?.toString() ?? '',
         'Grade': baseData['Grade']?.toString() ?? '',
         'Status': status, // Make sure status is properly set
-        'Adjusted_Eligible_Date': adjustedDate,
-        'Last_Promotion_Dt': baseData['Last_Promotion_Dt']?.toString() ?? '',
+        'Last_Promotion_Dt':
+            lastPromotionDate, // Use adjusted date from promotions as last promotion date
         'Prom_Reason': promReason,
         'promoted_date': now,
         'created_date': now,
@@ -268,7 +326,7 @@ class PromotionsDataService {
           WHERE "$badgeColumn" IN ($placeholders)
           GROUP BY "$badgeColumn"
         ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.id = t2.max_id
-        ORDER BY t1.id
+        ORDER BY CAST(t1."$badgeColumn" AS INTEGER) ASC
       ''', badgeNumbers);
 
       print(
@@ -281,17 +339,36 @@ class PromotionsDataService {
       // Create maps for quick lookup of custom data - ensure they're mutable
       final customDatesMap = <String, String>{};
       final customPromReasonMap = <String, String>{};
+
       for (final promotion in promotionsBadges) {
         final mutablePromotion = Map<String, dynamic>.from(promotion);
         final badgeNo = mutablePromotion['Badge_NO']?.toString() ?? '';
-        final customDate =
+        final promotionDate =
             mutablePromotion['Adjusted_Eligible_Date']?.toString() ?? '';
         final customPromReason =
             mutablePromotion['Prom_Reason']?.toString() ?? '';
+
         if (badgeNo.isNotEmpty) {
-          if (customDate.isNotEmpty) {
-            customDatesMap[badgeNo] = customDate;
+          // Find the corresponding base record for this employee
+          final baseRecord = data.firstWhere(
+            (record) => record[badgeColumn]?.toString() == badgeNo,
+            orElse: () => <String, dynamic>{},
+          );
+
+          final baseDate =
+              baseRecord['Adjusted_Eligible_Date']?.toString() ?? '';
+
+          // Compare dates and update if necessary
+          final finalDate = await _compareAndUpdateAdjustedDate(
+            badgeNo,
+            promotionDate,
+            baseDate,
+          );
+
+          if (finalDate.isNotEmpty) {
+            customDatesMap[badgeNo] = finalDate;
           }
+
           customPromReasonMap[badgeNo] = customPromReason;
         }
       }
@@ -325,6 +402,40 @@ class PromotionsDataService {
             modifiedRecord['Status'] = 'N/A';
           }
 
+          // REAL-TIME VALIDATION - validate every time data is loaded
+          final validationMessages = <String>[];
+          final validationTypes = <String>[];
+
+          // Validate Old Basic against Salary Scale
+          final basicValidation = await _validateOldBasic(
+            modifiedRecord,
+            badgeNo,
+          );
+          if (basicValidation != null) {
+            validationMessages.add(basicValidation);
+            validationTypes.add('basic_validation');
+          }
+
+          // Validate Adjusted Eligible Date
+          final dateValidation = _validateAdjustedEligibleDate(
+            modifiedRecord,
+            badgeNo,
+          );
+          if (dateValidation != null) {
+            validationMessages.add(dateValidation);
+            validationTypes.add('date_validation');
+          }
+
+          // Set highlighting flags based on real-time validation
+          modifiedRecord['_highlighted'] = validationMessages.isNotEmpty;
+          modifiedRecord['_validation_type'] = validationTypes.join(',');
+
+          if (validationMessages.isNotEmpty) {
+            print(
+              'Real-time validation for $badgeNo: ${validationMessages.join('; ')}',
+            );
+          }
+
           final calculatedRecord = await _calculationService
               .calculatePromotionData(modifiedRecord);
           print(
@@ -349,6 +460,35 @@ class PromotionsDataService {
             fallbackRecord['Prom_Reason'] = _getPromReasonFromBaseData(record);
           }
 
+          // Apply real-time validation to fallback record too
+          final validationMessages = <String>[];
+          final validationTypes = <String>[];
+
+          try {
+            final basicValidation = await _validateOldBasic(
+              fallbackRecord,
+              badgeNo,
+            );
+            if (basicValidation != null) {
+              validationMessages.add(basicValidation);
+              validationTypes.add('basic_validation');
+            }
+
+            final dateValidation = _validateAdjustedEligibleDate(
+              fallbackRecord,
+              badgeNo,
+            );
+            if (dateValidation != null) {
+              validationMessages.add(dateValidation);
+              validationTypes.add('date_validation');
+            }
+          } catch (validationError) {
+            print('Error in fallback validation: $validationError');
+          }
+
+          fallbackRecord['_highlighted'] = validationMessages.isNotEmpty;
+          fallbackRecord['_validation_type'] = validationTypes.join(',');
+
           fallbackRecord['Next_Grade'] = '';
           fallbackRecord['4% Adj'] = '0';
           fallbackRecord['Annual_Increment'] = '0';
@@ -366,121 +506,84 @@ class PromotionsDataService {
     }
   }
 
-  Future<Map<String, String>> _getStatusData(List<String> badgeNumbers) async {
-    final statusMap = <String, String>{};
+  Future<List<String>> addEmployeesToPromotions(
+    List<String> badgeNumbers,
+  ) async {
+    final batch = db.batch();
+    final now = DateTime.now().toIso8601String();
+    final duplicates = <String>[];
 
     try {
-      // Check if Status table exists
-      final statusTableExists = await db.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'Status'",
-      );
+      // First, check which employees exist in the base table
+      final existingEmployees = await checkEmployeesInBaseSheet(badgeNumbers);
 
-      if (statusTableExists.isEmpty) {
-        print('Status table does not exist');
-        return statusMap;
-      }
+      for (final badgeNo in existingEmployees) {
+        final existing = await db.query(
+          'promotions',
+          where: 'Badge_NO = ?',
+          whereArgs: [badgeNo],
+        );
 
-      // Get status data for all badge numbers
-      final placeholders = badgeNumbers.map((_) => '?').join(',');
-      final statusData = await db.rawQuery('''
-        SELECT "Badge_NO", "Status" FROM "Status"
-        WHERE "Badge_NO" IN ($placeholders)
-      ''', badgeNumbers);
+        if (existing.isEmpty) {
+          // Get the original data from base table
+          final baseData = await _getEmployeeFromBaseTable(badgeNo);
 
-      print(
-        'Status query returned ${statusData.length} records',
-      ); // Debug print
+          final originalDate =
+              baseData?['Adjusted_Eligible_Date']?.toString() ?? '';
+          final originalPromReason = _getPromReasonFromBaseData(baseData);
 
-      for (final row in statusData) {
-        final badgeNo = row['Badge_NO']?.toString() ?? '';
-        final status = row['Status']?.toString() ?? 'N/A';
-        if (badgeNo.isNotEmpty) {
-          statusMap[badgeNo] = status;
-          print('Found status for $badgeNo: $status'); // Debug print
+          // Remove validation storage - validation will be done in real-time
+          batch.insert('promotions', {
+            'Badge_NO': badgeNo,
+            'Adjusted_Eligible_Date': originalDate,
+            'Prom_Reason': originalPromReason,
+            'created_date': now,
+          });
+
+          print(
+            'Inserted promotion record for $badgeNo (validation will be real-time)',
+          );
+        } else {
+          duplicates.add(badgeNo);
         }
       }
 
-      print('Retrieved status data for ${statusMap.length} employees');
+      await batch.commit();
+      return duplicates;
     } catch (e) {
-      print('Error getting status data: $e');
+      print('Error adding employees to promotions: $e');
+      rethrow;
     }
-
-    return statusMap;
   }
 
-  Future<Map<String, dynamic>?> _getEmployeeFromBaseTable(
+  Future<String?> _validateEmployeeData(
+    Map<String, dynamic>? baseData,
     String badgeNo,
   ) async {
+    if (baseData == null) return null;
+
     try {
-      // Get all available columns to find the badge column
-      final allColumns = await getAvailableColumns();
-      final badgeColumn = allColumns.firstWhere(
-        (col) => col.toLowerCase().contains('badge'),
-        orElse: () => 'Badge_NO',
-      );
+      final validationMessages = <String>[];
 
-      // Query the base table for this specific employee (latest record only)
-      final result = await db.rawQuery(
-        '''
-        SELECT t1.* FROM "$baseTableName" t1
-        INNER JOIN (
-          SELECT "$badgeColumn", MAX(id) as max_id
-          FROM "$baseTableName"
-          WHERE "$badgeColumn" = ?
-          GROUP BY "$badgeColumn"
-        ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.id = t2.max_id
-        LIMIT 1
-      ''',
-        [badgeNo],
-      );
+      // Validate Old Basic against Salary Scale
+      final basicValidation = await _validateOldBasic(baseData, badgeNo);
+      if (basicValidation != null) {
+        validationMessages.add(basicValidation);
+      }
 
-      return result.isNotEmpty ? result.first : null;
+      // Validate Adjusted Eligible Date
+      final dateValidation = _validateAdjustedEligibleDate(baseData, badgeNo);
+      if (dateValidation != null) {
+        validationMessages.add(dateValidation);
+      }
+
+      // Return combined validation messages if any exist
+      return validationMessages.isNotEmpty
+          ? validationMessages.join(' AND ')
+          : null;
     } catch (e) {
-      print('Error getting employee from base table: $e');
-      return null;
-    }
-  }
-
-  Future<List<String>> getAvailableColumns() async {
-    try {
-      final tableInfo = await db.rawQuery(
-        'PRAGMA table_info("$baseTableName")',
-      );
-      final baseColumns =
-          tableInfo.map((col) => col['name'].toString()).toList();
-      print('Available columns in $baseTableName: $baseColumns');
-
-      // Add the calculated columns to the available columns
-      final allColumns = List<String>.from(baseColumns);
-
-      // Add Status column (it's added dynamically from Status table)
-      if (!allColumns.contains('Status')) {
-        allColumns.add('Status');
-      }
-
-      // Add Prom_Reason column if it doesn't exist
-      if (!allColumns.contains('Prom_Reason')) {
-        allColumns.add('Prom_Reason');
-      }
-
-      // Add calculated columns if they don't already exist
-      final calculatedColumns = [
-        'Next_Grade',
-        '4% Adj',
-        'Annual_Increment',
-        'New_Basic',
-      ];
-      for (final calcCol in calculatedColumns) {
-        if (!allColumns.contains(calcCol)) {
-          allColumns.add(calcCol);
-        }
-      }
-
-      print('All available columns (including calculated): $allColumns');
-      return allColumns;
-    } catch (e) {
-      print('Error getting available columns: $e');
-      rethrow;
+      print('Error validating employee data for $badgeNo: $e');
+      return null; // Allow addition if validation fails
     }
   }
 
@@ -549,6 +652,124 @@ class PromotionsDataService {
     }
   }
 
+  Future<List<String>> getAvailableColumns() async {
+    try {
+      final tableInfo = await db.rawQuery(
+        'PRAGMA table_info("$baseTableName")',
+      );
+      final baseColumns =
+          tableInfo.map((col) => col['name'].toString()).toList();
+      print('Available columns in $baseTableName: $baseColumns');
+
+      // Add the calculated columns to the available columns
+      final allColumns = List<String>.from(baseColumns);
+
+      // Add Status column (it's added dynamically from Status table)
+      if (!allColumns.contains('Status')) {
+        allColumns.add('Status');
+      }
+
+      // Add Prom_Reason column if it doesn't exist
+      if (!allColumns.contains('Prom_Reason')) {
+        allColumns.add('Prom_Reason');
+      }
+
+      // Add calculated columns if they don't already exist
+      final calculatedColumns = [
+        'Next_Grade',
+        '4% Adj',
+        'Annual_Increment',
+        'New_Basic',
+      ];
+      for (final calcCol in calculatedColumns) {
+        if (!allColumns.contains(calcCol)) {
+          allColumns.add(calcCol);
+        }
+      }
+
+      print('All available columns (including calculated): $allColumns');
+      return allColumns;
+    } catch (e) {
+      print('Error getting available columns: $e');
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _getEmployeeFromBaseTable(
+    String badgeNo,
+  ) async {
+    try {
+      // Get all available columns to find the badge column
+      final allColumns = await getAvailableColumns();
+      final badgeColumn = allColumns.firstWhere(
+        (col) => col.toLowerCase().contains('badge'),
+        orElse: () => 'Badge_NO',
+      );
+
+      // Query the base table for this specific employee (latest record only)
+      final result = await db.rawQuery(
+        '''
+        SELECT t1.* FROM "$baseTableName" t1
+        INNER JOIN (
+          SELECT "$badgeColumn", MAX(id) as max_id
+          FROM "$baseTableName"
+          WHERE "$badgeColumn" = ?
+          GROUP BY "$badgeColumn"
+        ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.id = t2.max_id
+        LIMIT 1
+      ''',
+        [badgeNo],
+      );
+
+      return result.isNotEmpty ? result.first : null;
+    } catch (e) {
+      print('Error getting employee from base table: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, String>> _getStatusData(List<String> badgeNumbers) async {
+    final statusMap = <String, String>{};
+
+    try {
+      // Check if Status table exists
+      final statusTableExists = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'Status'",
+      );
+
+      if (statusTableExists.isEmpty) {
+        print('Status table does not exist');
+        return statusMap;
+      }
+
+      // Get status data for all badge numbers
+      final placeholders = badgeNumbers.map((_) => '?').join(',');
+      final statusData = await db.rawQuery('''
+        SELECT "Badge_NO", "Status" FROM "Status"
+        WHERE "Badge_NO" IN ($placeholders)
+      ''', badgeNumbers);
+
+      print(
+        'Status query returned ${statusData.length} records',
+      ); // Debug print
+
+      for (final row in statusData) {
+        final badgeNo = row['Badge_NO']?.toString() ?? '';
+        final status = row['Status']?.toString() ?? 'N/A';
+        if (badgeNo.isNotEmpty) {
+          statusMap[badgeNo] = status;
+          print('Found status for $badgeNo: $status'); // Debug print
+        }
+      }
+
+      print('Retrieved status data for ${statusMap.length} employees');
+    } catch (e) {
+      print('Error getting status data: $e');
+    }
+
+    return statusMap;
+  }
+
   String _getPromReasonFromBaseData(Map<String, dynamic>? baseData) {
     if (baseData == null) return '';
 
@@ -576,82 +797,114 @@ class PromotionsDataService {
     return doubleValue.round().toString();
   }
 
-  Future<List<String>> addEmployeesToPromotions(
-    List<String> badgeNumbers,
-  ) async {
-    final batch = db.batch();
-    final now = DateTime.now().toIso8601String();
-    final duplicates = <String>[];
-    final validationErrors = <String>[];
-
+  String? _validateAdjustedEligibleDate(
+    Map<String, dynamic> baseData,
+    String badgeNo,
+  ) {
     try {
-      // First, check which employees exist in the base table
-      final existingEmployees = await checkEmployeesInBaseSheet(badgeNumbers);
+      final adjustedEligibleDate =
+          baseData['Adjusted_Eligible_Date']?.toString() ?? '';
 
-      for (final badgeNo in existingEmployees) {
-        final existing = await db.query(
-          'promotions',
-          where: 'Badge_NO = ?',
-          whereArgs: [badgeNo],
-        );
+      if (adjustedEligibleDate.isEmpty) return null;
 
-        if (existing.isEmpty) {
-          // Get the original data from base table
-          final baseData = await _getEmployeeFromBaseTable(badgeNo);
+      // Parse the date
+      final date = _parseDate(adjustedEligibleDate);
+      final currentYear = DateTime.now().year;
 
-          // Validate the employee data before adding
-          final validationResult = await _validateEmployeeData(
-            baseData,
-            badgeNo,
-          );
-          if (validationResult != null) {
-            validationErrors.add(validationResult);
-            continue; // Skip this employee
-          }
-
-          final originalDate =
-              baseData?['Adjusted_Eligible_Date']?.toString() ?? '';
-          final originalPromReason = _getPromReasonFromBaseData(baseData);
-
-          batch.insert('promotions', {
-            'Badge_NO': badgeNo,
-            'Adjusted_Eligible_Date': originalDate,
-            'Prom_Reason': originalPromReason,
-            'created_date': now,
-          });
-        } else {
-          duplicates.add(badgeNo);
-        }
+      // Check if the date year is bigger than current year
+      if (date.year > currentYear) {
+        return 'Badge $badgeNo: Adjusted Eligible Date ($adjustedEligibleDate) is in future year (${date.year})';
       }
 
-      await batch.commit();
-
-      // Return both duplicates and validation errors
-      final allErrors = <String>[];
-      allErrors.addAll(duplicates);
-      allErrors.addAll(validationErrors);
-      return allErrors;
+      return null;
     } catch (e) {
-      print('Error adding employees to promotions: $e');
-      rethrow;
+      print('Error validating adjusted eligible date for $badgeNo: $e');
+      return null;
     }
   }
 
-  Future<String?> _validateEmployeeData(
-    Map<String, dynamic>? baseData,
-    String badgeNo,
-  ) async {
-    if (baseData == null) return null;
+  DateTime _parseDate(String dateString) {
+    if (dateString.isEmpty) {
+      return DateTime(1900); // Very old date for comparison
+    }
 
     try {
-      // Validate Old Basic against Salary Scale
-      final basicValidation = await _validateOldBasic(baseData, badgeNo);
-      if (basicValidation != null) return basicValidation;
-
-      return null; // All validations passed
+      if (dateString.contains('.')) {
+        final parts = dateString.split('.');
+        if (parts.length >= 3) {
+          return DateTime(
+            int.parse(parts[2]),
+            int.parse(parts[1]),
+            int.parse(parts[0]),
+          );
+        }
+      } else if (dateString.contains('/')) {
+        final parts = dateString.split('/');
+        if (parts.length >= 3) {
+          return DateTime(
+            int.parse(parts[2]),
+            int.parse(parts[1]),
+            int.parse(parts[0]),
+          );
+        }
+      } else if (dateString.contains('-')) {
+        final parts = dateString.split('-');
+        if (parts.length >= 3) {
+          return DateTime(
+            int.parse(parts[0]),
+            int.parse(parts[1]),
+            int.parse(parts[2]),
+          );
+        }
+      } else {
+        return DateTime.parse(dateString);
+      }
     } catch (e) {
-      print('Error validating employee data for $badgeNo: $e');
-      return null; // Allow addition if validation fails
+      print('Error parsing date "$dateString": $e');
+    }
+
+    return DateTime(1900); // Fallback date
+  }
+
+  Future<String> _compareAndUpdateAdjustedDate(
+    String badgeNo,
+    String promotionDate,
+    String baseDate,
+  ) async {
+    try {
+      // If promotion date is empty, use base date
+      if (promotionDate.isEmpty) {
+        if (baseDate.isNotEmpty) {
+          await updateAdjustedEligibleDate(badgeNo, baseDate);
+          print('Updated promotion date for $badgeNo from empty to $baseDate');
+        }
+        return baseDate;
+      }
+
+      // If base date is empty, use promotion date
+      if (baseDate.isEmpty) {
+        return promotionDate;
+      }
+
+      // Compare dates
+      final promotionDateTime = _parseDate(promotionDate);
+      final baseDateTime = _parseDate(baseDate);
+
+      // If base date is newer, update promotion table
+      if (baseDateTime.isAfter(promotionDateTime)) {
+        await updateAdjustedEligibleDate(badgeNo, baseDate);
+        print(
+          'Updated promotion date for $badgeNo from $promotionDate to $baseDate (newer)',
+        );
+        return baseDate;
+      }
+
+      // If promotion date is equal or newer, keep it
+      return promotionDate;
+    } catch (e) {
+      print('Error comparing dates for $badgeNo: $e');
+      // If there's an error parsing dates, prefer base date if available
+      return baseDate.isNotEmpty ? baseDate : promotionDate;
     }
   }
 
@@ -662,10 +915,21 @@ class PromotionsDataService {
     try {
       final oldBasic =
           double.tryParse(baseData['Basic']?.toString() ?? '0') ?? 0;
-      final grade = baseData['Grade']?.toString() ?? '';
+      final gradeRaw = baseData['Grade']?.toString() ?? '';
       final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
 
-      if (oldBasic == 0 || grade.isEmpty) return null;
+      if (oldBasic == 0 || gradeRaw.isEmpty) {
+        print(
+          'Badge $badgeNo: Old Basic=$oldBasic, Grade=$gradeRaw (skipping validation - empty values)',
+        );
+        return null;
+      }
+
+      // Strip leading zeros from grade (010 -> 10)
+      final grade = gradeRaw.replaceAll(RegExp(r'^0+'), '');
+
+      // If all characters were zeros, keep at least one zero
+      final finalGrade = grade.isEmpty ? '0' : grade;
 
       // Determine which salary scale table to use
       final salaryScaleTable =
@@ -677,7 +941,7 @@ class PromotionsDataService {
       final salaryScaleData = await db.query(
         salaryScaleTable,
         where: 'Grade = ?',
-        whereArgs: [grade],
+        whereArgs: [finalGrade],
       );
 
       if (salaryScaleData.isNotEmpty) {
@@ -692,15 +956,32 @@ class PromotionsDataService {
             ) ??
             0;
 
+        // Print the old basic and maximum for every row
+        print(
+          'Badge $badgeNo: Old Basic=${oldBasic.round()}, Maximum=${maximum.round()}, Grade=$gradeRaw->$finalGrade, Table=$salaryScaleTable',
+        );
+
         // Check if old basic is below minimum
         if (oldBasic < minimum) {
-          return 'Badge $badgeNo: Old Basic (${oldBasic.round()}) is below minimum (${minimum.round()}) for Grade $grade';
+          print(
+            'Badge $badgeNo: VALIDATION FAILED - Old Basic (${oldBasic.round()}) is below minimum (${minimum.round()})',
+          );
+          return 'Badge $badgeNo: Old Basic (${oldBasic.round()}) is below minimum (${minimum.round()}) for Grade $finalGrade';
         }
 
         // Check if old basic exceeds maximum
         if (oldBasic > maximum) {
-          return 'Badge $badgeNo: Old Basic (${oldBasic.round()}) exceeds maximum (${maximum.round()}) for Grade $grade';
+          print(
+            'Badge $badgeNo: VALIDATION FAILED - Old Basic (${oldBasic.round()}) exceeds maximum (${maximum.round()})',
+          );
+          return 'Badge $badgeNo: Old Basic (${oldBasic.round()}) exceeds maximum (${maximum.round()}) for Grade $finalGrade';
         }
+
+        print('Badge $badgeNo: VALIDATION PASSED - Old Basic is within range');
+      } else {
+        print(
+          'Badge $badgeNo: No salary scale data found for Grade $gradeRaw->$finalGrade in table $salaryScaleTable',
+        );
       }
 
       return null;

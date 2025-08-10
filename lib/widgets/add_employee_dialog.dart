@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:hr/widgets/custom_snackbar.dart';
 
 class AddEmployeeDialog extends StatefulWidget {
   final Function(List<String>) onAddEmployees;
@@ -112,11 +113,9 @@ class _AddEmployeeDialogState extends State<AddEmployeeDialog> {
       widget.onAddEmployees(badgeNumbers);
     } else {
       // Show message if no valid entries
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى إدخال أرقام البادج بالصيغة الصحيحة'),
-          duration: Duration(seconds: 3),
-        ),
+      CustomSnackbar.showError(
+        context,
+        'يرجى إدخال أرقام البادج بالصيغة الصحيحة',
       );
     }
   }

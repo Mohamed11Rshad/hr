@@ -16,7 +16,37 @@ class DatabaseService {
       options: OpenDatabaseOptions(
         version: 1, // Define your DB version
         onCreate: (db, version) async {
-          // Schema creation logic if any (e.g., initial tables)
+          // Create Base_Sheet table
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS Base_Sheet (
+              Badge_NO TEXT PRIMARY KEY,
+              Employee_Name TEXT,
+              Bus_Line TEXT,
+              Depart_Text TEXT,
+              Grade TEXT,
+              Basic TEXT,
+              Appraisal5 TEXT,
+              pay_scale_area_text TEXT,
+              upload_date TEXT
+            )
+          ''');
+
+          // Create grade_changes table
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS grade_changes (
+              badge_no TEXT PRIMARY KEY,
+              new_grade TEXT,
+              changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+          ''');
+
+          // Create Adjustments table
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS Adjustments (
+              Badge_NO TEXT PRIMARY KEY,
+              Adjustments TEXT
+            )
+          ''');
         },
       ),
     );

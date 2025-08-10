@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:hr/constants/transfers_constants.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 class TransfersDataSource extends DataGridSource {
@@ -9,8 +8,8 @@ class TransfersDataSource extends DataGridSource {
   final List<String> _columns;
   final BuildContext context;
   final Function(Map<String, dynamic>)? onRemoveTransfer;
-  final Function(String)? onCopyCellContent;
   final Function(String, String, String)? onUpdateField;
+  final Function(String)? onCopyCellContent;
   final Set<String> _clipboardValues = <String>{};
   List<DataGridRow> _dataGridRows = [];
 
@@ -19,10 +18,24 @@ class TransfersDataSource extends DataGridSource {
     this._columns, {
     required this.context,
     this.onRemoveTransfer,
-    this.onCopyCellContent,
     this.onUpdateField,
+    this.onCopyCellContent,
   }) {
     _buildDataGridRows();
+  }
+
+  void clearSelection() {
+    _clipboardValues.clear();
+  }
+
+  String getSelectedCellsAsText() {
+    return _clipboardValues.join('\n');
+  }
+
+  int get clipboardValuesCount => _clipboardValues.length;
+
+  void addToClipboard(String value) {
+    _clipboardValues.add(value);
   }
 
   void _buildDataGridRows() {
@@ -41,40 +54,54 @@ class TransfersDataSource extends DataGridSource {
   }
 
   @override
-  List<DataGridRow> get rows => List.from(_dataGridRows);
+  List<DataGridRow> get rows => _dataGridRows;
 
-  @override
-  DataGridRowAdapter buildRow(DataGridRow row) {
-    final rowIndex = _dataGridRows.indexOf(row);
-    final record = _data[rowIndex];
+  bool _isFieldEditable(String columnName) {
+    const editableFields = {'POD', 'ERD', 'Available_in_ERD'};
+    return editableFields.contains(columnName);
+  }
 
-    final cells =
-        row.getCells().map<Widget>((dataGridCell) {
-          final isEditable = TransfersConstants.editableColumns.contains(
-            dataGridCell.columnName,
-          );
+  bool _isDropdownField(String columnName) {
+    return columnName == 'DONE_YES_NO';
+  }
 
-          Widget cellWidget;
+  String _normalizeDropdownValue(String value) {
+    // Normalize Arabic values to English for consistency
+    switch (value.toLowerCase().trim()) {
+      case 'تم':
+      case 'done':
+        return 'Done';
+      case 'نعم':
+      case 'yes':
+        return 'Yes';
+      case 'لا':
+      case 'no':
+        return 'No';
+      case 'إلغاء':
+      case 'cancel':
+        return 'Cancel';
+      default:
+        return value.isEmpty ? '' : value;
+    }
+  }
 
-          if (isEditable && onUpdateField != null) {
-            cellWidget = _buildEditableCell(record, dataGridCell);
-          } else {
-            cellWidget = _buildRegularCell(dataGridCell);
-          }
+  Widget _buildRegularCell(DataGridCell dataGridCell) {
+    // Convert Arabic values to English for display
+    final displayValue =
+        dataGridCell.columnName == 'DONE_YES_NO'
+            ? _normalizeDropdownValue(dataGridCell.value.toString())
+            : dataGridCell.value.toString();
 
-          return GestureDetector(
-            onSecondaryTap: () => _handleRightClick(dataGridCell),
-            onDoubleTap: () => _handleDoubleClick(dataGridCell),
-            child: cellWidget,
-          );
-        }).toList();
-
-    // Add delete button
-    cells.add(_buildDeleteButton(record));
-
-    return DataGridRowAdapter(
-      color: rowIndex % 2 == 0 ? Colors.white : Colors.blue.shade50,
-      cells: cells,
+    return Container(
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(8.0),
+      child: Text(
+        displayValue,
+        style: const TextStyle(fontSize: 14),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+      ),
     );
   }
 
@@ -82,6 +109,11 @@ class TransfersDataSource extends DataGridSource {
     Map<String, dynamic> record,
     DataGridCell dataGridCell,
   ) {
+    // Check if this is the dropdown field
+    if (_isDropdownField(dataGridCell.columnName)) {
+      return _buildDropdownCell(record, dataGridCell);
+    }
+
     return Container(
       alignment: Alignment.center,
       padding: const EdgeInsets.all(4.0),
@@ -124,36 +156,6 @@ class TransfersDataSource extends DataGridSource {
     );
   }
 
-  Widget _buildRegularCell(DataGridCell dataGridCell) {
-    return Container(
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(8.0),
-      child: Text(
-        _formatDisplayValue(
-          dataGridCell.columnName,
-          dataGridCell.value.toString(),
-        ),
-        style: const TextStyle(fontSize: 14),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        textAlign: TextAlign.center,
-      ),
-    );
-  }
-
-  Widget _buildDeleteButton(Map<String, dynamic> record) {
-    return Container(
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(4.0),
-      child: IconButton(
-        icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-        onPressed:
-            onRemoveTransfer != null ? () => onRemoveTransfer!(record) : null,
-        tooltip: 'حذف التنقل',
-      ),
-    );
-  }
-
   void _handleRightClick(DataGridCell dataGridCell) {
     final cellValue = dataGridCell.value.toString();
     _clipboardValues.add(cellValue);
@@ -176,29 +178,19 @@ class TransfersDataSource extends DataGridSource {
     String fieldName,
     String currentValue,
   ) async {
-    final sNo = record['S_NO']?.toString() ?? '';
-    if (sNo.isEmpty || onUpdateField == null) return;
-
     final controller = TextEditingController(text: currentValue);
     final result = await showDialog<String>(
       context: context,
       builder:
           (context) => AlertDialog(
-            title: Text('تعديل ${_getFieldDisplayName(fieldName)}'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: controller,
-                  decoration: InputDecoration(
-                    labelText: _getFieldDisplayName(fieldName),
-                    border: const OutlineInputBorder(),
-                    hintText: 'أدخل القيمة...',
-                  ),
-                  maxLines: 2,
-                  maxLength: 200,
-                ),
-              ],
+            title: Text('تعديل $fieldName'),
+            content: TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                labelText: fieldName,
+                border: const OutlineInputBorder(),
+              ),
+              maxLines: 3,
             ),
             actions: [
               TextButton(
@@ -214,25 +206,125 @@ class TransfersDataSource extends DataGridSource {
           ),
     );
 
-    if (result != null) {
+    if (result != null && onUpdateField != null) {
+      final sNo = record['S_NO']?.toString() ?? '';
       onUpdateField!(sNo, fieldName, result);
     }
   }
 
-  String _formatDisplayValue(String columnName, String value) {
-    // List of numeric columns that should be displayed as integers
-    const numericColumns = ['S_NO', 'Badge_NO', 'Grade', 'Badge_Number'];
+  Widget _buildDropdownCell(
+    Map<String, dynamic> record,
+    DataGridCell dataGridCell,
+  ) {
+    final currentValue = dataGridCell.value.toString();
+    final normalizedValue = _normalizeDropdownValue(currentValue);
 
-    if (numericColumns.contains(columnName) && value.isNotEmpty) {
-      final doubleValue = double.tryParse(value);
-      if (doubleValue != null) {
-        return doubleValue.round().toString();
-      }
-    }
-    return value;
+    return Container(
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(4.0),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.green.shade300),
+          borderRadius: BorderRadius.circular(4),
+          color: Colors.green.shade50,
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: normalizedValue.isEmpty ? null : normalizedValue,
+            hint: const Text(
+              'Select',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            isExpanded: true,
+            items: const [
+              DropdownMenuItem(value: 'Done', child: Text('Done')),
+              DropdownMenuItem(value: 'Yes', child: Text('Yes')),
+              DropdownMenuItem(value: 'No', child: Text('No')),
+              DropdownMenuItem(value: 'Cancel', child: Text('Cancel')),
+            ],
+            onChanged: (String? newValue) {
+              if (newValue != null && onUpdateField != null) {
+                final sNo = record['S_NO']?.toString() ?? '';
+
+                switch (newValue) {
+                  case 'Done':
+                    onUpdateField!(sNo, dataGridCell.columnName, newValue);
+                    break;
+                  case 'No':
+                    onRemoveTransfer?.call(record);
+                    break;
+                  case 'Yes':
+                    onUpdateField!(sNo, dataGridCell.columnName, newValue);
+                    break;
+                  case 'Cancel':
+                    break;
+                }
+              }
+            },
+            style: TextStyle(fontSize: 12, color: Colors.green.shade700),
+            dropdownColor: Colors.green.shade50,
+          ),
+        ),
+      ),
+    );
   }
 
-  String _getFieldDisplayName(String fieldName) {
-    return TransfersConstants.columnNames[fieldName] ?? fieldName;
+  // Add method to refresh data source
+  void refreshDataSource() {
+    _buildDataGridRows();
+    notifyListeners();
+  }
+
+  @override
+  DataGridRowAdapter buildRow(DataGridRow row) {
+    final rowIndex = _dataGridRows.indexOf(row);
+
+    // Safety check to prevent RangeError
+    if (rowIndex < 0 || rowIndex >= _data.length) {
+      // Return an empty row if index is out of bounds
+      return DataGridRowAdapter(
+        cells:
+            _columns.map<Widget>((column) => Container()).toList()
+              ..add(Container()),
+      );
+    }
+
+    final record = _data[rowIndex];
+
+    final cells =
+        row.getCells().map<Widget>((dataGridCell) {
+          return Container(
+            alignment: Alignment.center,
+            padding: const EdgeInsets.all(8.0),
+            child: Text(
+              dataGridCell.value.toString(),
+              style: const TextStyle(fontSize: 14),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          );
+        }).toList();
+
+    // Add delete button
+    cells.add(
+      Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(4.0),
+        child: IconButton(
+          icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+          onPressed: () => onRemoveTransfer?.call(record),
+          tooltip: 'حذف التنقل',
+        ),
+      ),
+    );
+
+    return DataGridRowAdapter(
+      color: rowIndex % 2 == 0 ? Colors.white : Colors.blue.shade50,
+      cells: cells,
+    );
   }
 }

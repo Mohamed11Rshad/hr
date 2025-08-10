@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:hr/widgets/editable_data_grid.dart';
+import 'package:hr/widgets/editable_data_grid.dart' hide TextButton;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class EditableTableDialog extends StatefulWidget {
@@ -188,19 +188,12 @@ class _EditableTableDialogState extends State<EditableTableDialog> {
   }
 
   Widget _buildContent() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (_errorMessage.isNotEmpty) {
-      return Center(child: Text(_errorMessage));
-    }
-
     if (_tableData.isEmpty) {
       return const Center(child: Text('لا توجد بيانات في هذا الجدول'));
     }
 
     return EditableDataGrid(
+      key: ValueKey(_tableData.length), // Add key to force refresh
       data: _tableData,
       columns: _columns,
       onCellUpdate: _updateCellValue,
