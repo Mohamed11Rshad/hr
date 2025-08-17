@@ -1,4 +1,6 @@
+import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import '../utils/category_mapper.dart';
 
 class TerminationDataService {
   double _calculateActualIncrease(
@@ -24,12 +26,9 @@ class TerminationDataService {
         grade = grade.substring(1); // Remove leading zero if present
       }
 
-      // Determine salary scale table
+      // Determine salary scale table using CategoryMapper
       final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
-      final salaryScaleTable =
-          payScaleArea.contains('Category B')
-              ? 'Salary_Scale_B'
-              : 'Salary_Scale_A';
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       // Get salary scale data for maximum calculation using current grade
       final salaryScaleData = await db.query(
@@ -196,11 +195,11 @@ class TerminationDataService {
             baseData,
             terminationDate,
           );
-          mutableTermination['Adjust_Months'] = adjustMonths.toString();
+          mutableTermination['Adjust_Months'] = adjustMonths.toStringAsFixed(2);
 
           // Calculate Adjustment
           final adjustment = await _calculateAdjustment(baseData, adjustMonths);
-          mutableTermination['Adjustment'] = adjustment.round().toString();
+          mutableTermination['Adjustment'] = adjustment.toStringAsFixed(2);
 
           // Calculate Old Basic + Adj
           final oldBasic =
@@ -246,11 +245,11 @@ class TerminationDataService {
 
           // Calculate New Basic: Appraisal amount + Old Basic + Adj
           final newBasic = _calculateNewBasic(
-            oldBasic,
+            oldBasic.toDouble(),
             adjustment,
-            appraisalAmount,
+            appraisalAmount.toDouble(),
           );
-          mutableTermination['New_Basic'] = newBasic.round().toString();
+          mutableTermination['New_Basic'] = newBasic.toStringAsFixed(2);
 
           // Calculate Current Lump sum (like appraisal sheet)
           // Use the same logic: Lump sum = annualIncrement - actualIncrease
@@ -295,8 +294,8 @@ class TerminationDataService {
           mutableTermination['Employee_Name'] = '';
           mutableTermination['Grade'] = '';
           mutableTermination['Old_Basic'] = '';
-          mutableTermination['Adjust_Months'] = '0';
-          mutableTermination['Adjustment'] = '0';
+          mutableTermination['Adjust_Months'] = '0.00';
+          mutableTermination['Adjustment'] = '0.00';
           mutableTermination['Old_Basic_Plus_Adj'] = '0';
           mutableTermination['Adjust_Date'] = '';
           mutableTermination['Appraisal_Text'] = appraisalText;
@@ -376,16 +375,12 @@ class TerminationDataService {
       final currentGrade =
           int.tryParse(grade.replaceAll(RegExp(r'^0+'), '')) ?? 0;
 
-      // Determine salary scale table
+      // Determine salary scale and annual increase tables using CategoryMapper
       final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
-      final annualIncreaseTable =
-          payScaleArea.contains('Category B')
-              ? 'Annual_Increase_B'
-              : 'Annual_Increase_A';
-      final salaryScaleTable =
-          payScaleArea.contains('Category B')
-              ? 'Salary_Scale_B'
-              : 'Salary_Scale_A';
+      final annualIncreaseTable = CategoryMapper.getAnnualIncreaseTable(
+        payScaleArea,
+      );
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       // Get salary scale data for midpoint calculation
       final salaryScaleData = await db.query(
@@ -640,49 +635,111 @@ class TerminationDataService {
     }
   }
 
-  Future<int> _calculateAdjustMonths(
+  Future<double> _calculateAdjustMonths(
     Map<String, dynamic> baseData,
     String terminationDate,
   ) async {
     try {
-      if (terminationDate.isEmpty) return 0;
+      if (terminationDate.isEmpty) return 0.0;
 
       final termDate = _parseDate(terminationDate);
       final lastPromotionDate = _parseDate(
         baseData['Last_Promotion_Dt']?.toString() ?? '',
       );
 
-      if (lastPromotionDate.year == 1900) return 0; // Invalid date
+      if (lastPromotionDate.year == 1900) return 0.0; // Invalid date
 
-      // Calculate months between last promotion and termination
-      final monthsDiff =
-          (termDate.year - lastPromotionDate.year) * 12 +
-          (termDate.month - lastPromotionDate.month);
+      // Calculate months between last promotion and termination (with decimal precision)
+      final yearsDiff = termDate.year - lastPromotionDate.year;
+      final monthsDiff = termDate.month - lastPromotionDate.month;
+      final daysDiff = termDate.day - lastPromotionDate.day;
 
-      return monthsDiff > 0 ? monthsDiff : 0;
+      // Calculate total months with decimal precision
+      double totalMonths = (yearsDiff * 12).toDouble() + monthsDiff.toDouble();
+
+      // Add fractional month based on days
+      if (daysDiff != 0) {
+        final daysInMonth = DateTime(termDate.year, termDate.month + 1, 0).day;
+        totalMonths += daysDiff / daysInMonth;
+      }
+
+      return totalMonths > 0 ? totalMonths : 0.0;
     } catch (e) {
       print('Error calculating adjust months: $e');
-      return 0;
+      return 0.0;
     }
   }
 
-  Future<int> _calculateAdjustment(
+  Future<double> _calculateAdjustment(
     Map<String, dynamic> baseData,
-    int adjustMonths,
+    double adjustMonths,
   ) async {
     try {
-      if (adjustMonths == 0) return 0;
+      if (adjustMonths == 0.0) return 0.0;
 
-      final oldBasic =
-          double.tryParse(baseData['Basic']?.toString() ?? '0')?.round() ?? 0;
+      // Get current grade and calculate next grade
+      var currentGrade = baseData['Grade']?.toString() ?? '';
+      if (currentGrade.isEmpty) return 0.0;
 
-      // Calculate 4% adjustment per month
-      final monthlyAdjustment = oldBasic * 0.04 / 12;
+      // Remove leading zeros if present
+      if (currentGrade.startsWith('0')) {
+        currentGrade = currentGrade.substring(1);
+      }
 
-      return (monthlyAdjustment * adjustMonths).round();
+      // Calculate next grade (current grade + 1)
+      final currentGradeNum = int.tryParse(currentGrade) ?? 0;
+      final nextGrade = (currentGradeNum + 1).toString();
+      debugPrint('///////////////////////Next Grade: $nextGrade');
+
+      // Get midpoint for next grade
+      final nextGradeMidpoint = await _getMidpointForGrade(baseData, nextGrade);
+
+      debugPrint(
+        '///////////////////////Next Grade Midpoint: $nextGradeMidpoint',
+      );
+
+      if (nextGradeMidpoint == 0.0) return 0.0;
+
+      // New formula: (midpoint × adj_months × 4/100) / 48
+      final result = (nextGradeMidpoint * adjustMonths * 4 / 100) / 48;
+
+      debugPrint('///////////////////////Adjustment Result: $result');
+
+      return result;
     } catch (e) {
       print('Error calculating adjustment: $e');
-      return 0;
+      return 0.0;
+    }
+  }
+
+  Future<double> _getMidpointForGrade(
+    Map<String, dynamic> baseData,
+    String grade,
+  ) async {
+    try {
+      // Determine salary scale table using CategoryMapper
+      final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
+
+      // Get salary scale data for midpoint calculation
+      final salaryScaleData = await db.query(
+        salaryScaleTable,
+        where: 'Grade = ?',
+        whereArgs: [grade],
+      );
+
+      if (salaryScaleData.isEmpty) return 0.0;
+
+      final midpoint =
+          double.tryParse(
+            salaryScaleData.first['midpoint']?.toString() ?? '0',
+          ) ??
+          0.0;
+
+      return midpoint;
+    } catch (e) {
+      print('Error getting midpoint for grade: $e');
+      return 0.0;
     }
   }
 
@@ -731,13 +788,17 @@ class TerminationDataService {
     }
   }
 
-  int _calculateNewBasic(int oldBasic, int adjustment, int appraisalAmount) {
+  double _calculateNewBasic(
+    double oldBasic,
+    double adjustment,
+    double appraisalAmount,
+  ) {
     try {
       // New Basic = Appraisal amount + Old Basic + Adj
       return appraisalAmount + oldBasic + adjustment;
     } catch (e) {
       print('Error calculating new basic: $e');
-      return 0;
+      return 0.0;
     }
   }
 

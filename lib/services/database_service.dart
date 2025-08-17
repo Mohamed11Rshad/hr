@@ -1,4 +1,5 @@
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import '../utils/category_mapper.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart'; // For getApplicationDocumentsDirectory
 import 'dart:io'; // For Directory
@@ -77,5 +78,33 @@ class DatabaseService {
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'android_metadata'",
     );
     return tables.map((row) => row['name'] as String).toList();
+  }
+
+  /// Check if all required tables exist for a specific category
+  static Future<Map<String, bool>> checkCategoryTablesExist(
+    Database db,
+    String category,
+  ) async {
+    final tables = await getAvailableTables(db);
+    final salaryScaleTable = CategoryMapper.getSalaryScaleTable(category);
+    final annualIncreaseTable = CategoryMapper.getAnnualIncreaseTable(category);
+
+    return {
+      'salaryScale': tables.contains(salaryScaleTable),
+      'annualIncrease': tables.contains(annualIncreaseTable),
+    };
+  }
+
+  /// Check if all required tables exist for all categories
+  static Future<Map<String, Map<String, bool>>> checkAllCategoryTablesExist(
+    Database db,
+  ) async {
+    final result = <String, Map<String, bool>>{};
+
+    for (final category in CategoryMapper.getAllCategories()) {
+      result[category] = await checkCategoryTablesExist(db, category);
+    }
+
+    return result;
   }
 }

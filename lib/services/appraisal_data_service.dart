@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import '../utils/category_mapper.dart';
 
 class AppraisalDataService {
   final Database db;
@@ -113,6 +114,7 @@ class AppraisalDataService {
       basicAmount,
       annualIncrementValue,
       maximum,
+      updatedRecord,
     );
     final lumpSumPaymentValue = annualIncrementValue - actualIncreaseValue;
     final totalLumpSum = lumpSumPaymentValue * 12;
@@ -126,10 +128,10 @@ class AppraisalDataService {
       'Adjustments': adjustmentsValue.toString(),
       'Original_Adjustments': adjustmentsValue.toString(),
       'Annual_Increment': annualIncrementValue.toString(),
-      'Actual_Increase': actualIncreaseValue.toString(),
-      'Lump_Sum_Payment': lumpSumPaymentValue.toString(),
-      'Total_Lump_Sum_12_Months': totalLumpSum.toString(),
-      'New_Basic': newBasicValue.toString(),
+      'Actual_Increase': actualIncreaseValue.toStringAsFixed(2),
+      'Lump_Sum_Payment': lumpSumPaymentValue.toStringAsFixed(2),
+      'Total_Lump_Sum_12_Months': totalLumpSum.toStringAsFixed(2),
+      'New_Basic': newBasicValue.toStringAsFixed(2),
       'New_Basic_System':
           record['New_Basic_System']?.toString() ?? newBasicValue.toString(),
     });
@@ -351,6 +353,7 @@ class AppraisalDataService {
           basicAmount,
           annualIncrement,
           gradeMaximum,
+          record,
         );
 
         // Calculate Lump sum payment
@@ -374,10 +377,10 @@ class AppraisalDataService {
           'MIDPOINT': midpoint.toString(),
           'MAXIMUM': maximum.toString(),
           'Annual_Increment': annualIncrement.toString(),
-          'Actual_Increase': actualIncrease.toString(),
-          'Lump_Sum_Payment': lumpSumPayment.toString(),
-          'Total_Lump_Sum_12_Months': totalLumpSum12Months.toString(),
-          'New_Basic': newBasic.toString(),
+          'Actual_Increase': actualIncrease.toStringAsFixed(2),
+          'Lump_Sum_Payment': lumpSumPayment.toStringAsFixed(2),
+          'Total_Lump_Sum_12_Months': totalLumpSum12Months.toStringAsFixed(2),
+          'New_Basic': newBasic.toStringAsFixed(2),
           'New_Basic_System':
               record['New_Basic_System']?.toString() ??
               '', // Use saved value if exists
@@ -386,7 +389,7 @@ class AppraisalDataService {
 
       return appraisalData;
     } catch (e) {
-      print('Error fetching appraisal data: $e');
+      debugPrint('Error fetching appraisal data: $e');
       return [];
     }
   }
@@ -404,12 +407,9 @@ class AppraisalDataService {
 
       debugPrint('++++++++++++++++++Calculating midpoint for grade: $grade');
 
-      // Determine salary scale table
+      // Determine salary scale table using CategoryMapper
       final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
-      final salaryScaleTable =
-          payScaleArea.contains('Category B')
-              ? 'Salary_Scale_B'
-              : 'Salary_Scale_A';
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       debugPrint(
         '++++++++++++++++++ Using salary scale table: $salaryScaleTable for grade: $grade',
@@ -436,7 +436,7 @@ class AppraisalDataService {
 
       return midpoint;
     } catch (e) {
-      print('Error calculating midpoint: $e');
+      debugPrint('Error calculating midpoint: $e');
       return 0.0;
     }
   }
@@ -452,12 +452,9 @@ class AppraisalDataService {
         grade = grade.substring(1); // Remove leading zero if present
       }
 
-      // Determine salary scale table
+      // Determine salary scale table using CategoryMapper
       final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
-      final salaryScaleTable =
-          payScaleArea.contains('Category B')
-              ? 'Salary_Scale_B'
-              : 'Salary_Scale_A';
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       // Get salary scale data for maximum calculation using current grade
       final salaryScaleData = await db.query(
@@ -476,7 +473,7 @@ class AppraisalDataService {
 
       return maximum;
     } catch (e) {
-      print('Error calculating maximum: $e');
+      debugPrint('Error calculating maximum: $e');
       return 0.0;
     }
   }
@@ -492,16 +489,12 @@ class AppraisalDataService {
         grade = grade.substring(1); // Remove leading zero if present
       }
 
-      // Determine salary scale table
+      // Determine salary scale and annual increase tables using CategoryMapper
       final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
-      final annualIncreaseTable =
-          payScaleArea.contains('Category B')
-              ? 'Annual_Increase_B'
-              : 'Annual_Increase_A';
-      final salaryScaleTable =
-          payScaleArea.contains('Category B')
-              ? 'Salary_Scale_B'
-              : 'Salary_Scale_A';
+      final annualIncreaseTable = CategoryMapper.getAnnualIncreaseTable(
+        payScaleArea,
+      );
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       // Get salary scale data for midpoint calculation using current grade
       final salaryScaleData = await db.query(
@@ -553,7 +546,7 @@ class AppraisalDataService {
 
       return potentialIncrement < 0 ? 0.0 : potentialIncrement;
     } catch (e) {
-      print('Error calculating annual increment: $e');
+      debugPrint('Error calculating annual increment: $e');
       return 0.0;
     }
   }
@@ -563,12 +556,97 @@ class AppraisalDataService {
     double amount,
     double annualIncrement,
     double maximum,
+    Map<String, dynamic> employeeRecord,
   ) {
+    // First calculate the normal actual increase
+    double actualIncrease;
     if (amount + annualIncrement > maximum) {
-      return maximum - amount;
+      actualIncrease = maximum - amount;
     } else {
-      return annualIncrement;
+      actualIncrease = annualIncrement;
     }
+
+    // Check if employee joined in the current year and apply pro-rating
+    final joinDateStr = employeeRecord['Date_of_Join']?.toString() ?? '';
+    if (joinDateStr.isNotEmpty) {
+      try {
+        final joinDate = _parseJoinDate(joinDateStr);
+        final currentYear = DateTime.now().year;
+
+        // If employee joined in the current year, apply pro-rating
+        if (joinDate.year == currentYear) {
+          final dailyIncrement = annualIncrement / 365;
+          final workingDays = _calculateWorkingDaysFromJoinToYearEnd(joinDate);
+          final maxAllowedIncrease = dailyIncrement * workingDays;
+
+          // Cap the actual increase to the pro-rated amount
+          if (actualIncrease > maxAllowedIncrease) {
+            actualIncrease = maxAllowedIncrease;
+          }
+
+          debugPrint('Employee joined in $currentYear: ${joinDate.toString()}');
+          debugPrint('Working days from join to year end: $workingDays');
+          debugPrint('Daily increment: $dailyIncrement');
+          debugPrint('Max allowed increase: $maxAllowedIncrease');
+          debugPrint('Final actual increase: $actualIncrease');
+        }
+      } catch (e) {
+        debugPrint('Error parsing join date "$joinDateStr": $e');
+        // Continue with normal calculation if date parsing fails
+      }
+    }
+
+    return actualIncrease;
+  }
+
+  DateTime _parseJoinDate(String dateStr) {
+    // Handle various date formats
+    dateStr = dateStr.trim();
+
+    // Try different date formats
+    final formats = [
+      RegExp(r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$'), // DD.MM.YYYY
+      RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$'), // DD/MM/YYYY
+      RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})$'), // YYYY-MM-DD
+    ];
+
+    for (final format in formats) {
+      final match = format.firstMatch(dateStr);
+      if (match != null) {
+        int day, month, year;
+
+        if (format == formats[2]) {
+          // YYYY-MM-DD
+          year = int.parse(match.group(1)!);
+          month = int.parse(match.group(2)!);
+          day = int.parse(match.group(3)!);
+        } else {
+          // DD.MM.YYYY or DD/MM/YYYY
+          day = int.parse(match.group(1)!);
+          month = int.parse(match.group(2)!);
+          year = int.parse(match.group(3)!);
+        }
+
+        return DateTime(year, month, day);
+      }
+    }
+
+    throw FormatException('Unable to parse date: $dateStr');
+  }
+
+  int _calculateWorkingDaysFromJoinToYearEnd(DateTime joinDate) {
+    final currentYear = joinDate.year;
+    final yearEnd = DateTime(currentYear, 12, 31);
+
+    // If join date is after year end (shouldn't happen), return 0
+    if (joinDate.isAfter(yearEnd)) {
+      return 0;
+    }
+
+    // Calculate the difference in days, including both start and end dates
+    final difference = yearEnd.difference(joinDate).inDays + 1;
+
+    return difference;
   }
 
   // Save grade changes to persist them

@@ -236,7 +236,6 @@ class TerminationDataSource extends DataGridSource {
   String _formatCellValue(String columnName, String value) {
     // Format all numeric values as integers (no decimals)
     if (columnName == 'Old_Basic' ||
-        columnName == 'Adjustment' ||
         columnName == 'Old_Basic_Plus_Adj' ||
         columnName == 'Annual_Increment' ||
         columnName == 'New_Basic' ||
@@ -244,6 +243,14 @@ class TerminationDataSource extends DataGridSource {
       final doubleValue = double.tryParse(value);
       if (doubleValue != null) {
         return doubleValue.round().toString();
+      }
+    }
+
+    // Format decimal values for adjustment months and adjustment (allow decimal places)
+    if (columnName == 'Adjust_Months' || columnName == 'Adjustment') {
+      final doubleValue = double.tryParse(value);
+      if (doubleValue != null) {
+        return doubleValue.toStringAsFixed(2);
       }
     }
 

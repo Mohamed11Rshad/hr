@@ -3,6 +3,7 @@ import 'package:hr/core/app_colors.dart';
 import 'package:hr/core/utils/validation_utils.dart';
 import 'package:hr/widgets/common/base_data_grid.dart';
 import 'package:hr/widgets/custom_snackbar.dart';
+import 'package:hr/utils/category_mapper.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:syncfusion_flutter_core/theme.dart'; // Add this import
 
@@ -513,7 +514,10 @@ class _EditableDataSource extends DataGridSource {
 
     final controller = TextEditingController(text: currentValue);
     String? errorMessage;
+    String? selectedCategory = currentValue.isNotEmpty ? currentValue : null;
 
+    // Check if this is a category field
+    final isCategoryField = columnName.toLowerCase() == 'pay_scale_area_text';
     // Check if this is a date field
     final isDateField = _isDateField(columnName);
 
@@ -531,35 +535,65 @@ class _EditableDataSource extends DataGridSource {
                       if (selectedTable == 'Base_Sheet') ...[
                         const SizedBox(height: 12),
                       ],
-                      TextField(
-                        controller: controller,
-                        decoration: InputDecoration(
-                          labelText: columnName,
-                          border: const OutlineInputBorder(),
-                          hintText:
-                              isDateField
-                                  ? 'أدخل التاريخ بصيغة: يوم.شهر.سنة (مثال: 15.03.2024)'
-                                  : 'أدخل القيمة...',
-                          errorText: errorMessage,
-                        ),
-                        maxLines: isDateField ? 1 : 3,
-                        maxLength: isDateField ? 50 : 500,
-                        onChanged: (value) {
-                          if (isDateField) {
+                      // Show category dropdown for pay_scale_area_text field
+                      if (isCategoryField)
+                        DropdownButtonFormField<String>(
+                          value: selectedCategory,
+                          decoration: InputDecoration(
+                            labelText: 'فئة السلم الوظيفي',
+                            border: const OutlineInputBorder(),
+                            errorText: errorMessage,
+                          ),
+                          items:
+                              CategoryMapper.getAllCategories().map((category) {
+                                return DropdownMenuItem<String>(
+                                  value: category,
+                                  child: Text(category),
+                                );
+                              }).toList(),
+                          onChanged: (value) {
                             setDialogState(() {
-                              if (value.isNotEmpty &&
-                                  !ValidationUtils.isValidDate(value)) {
-                                errorMessage =
-                                    ValidationUtils.getDateValidationError(
-                                      value,
-                                    );
-                              } else {
-                                errorMessage = null;
-                              }
+                              selectedCategory = value;
+                              controller.text = value ?? '';
                             });
-                          }
-                        },
-                      ),
+                          },
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'يرجى اختيار فئة السلم الوظيفي';
+                            }
+                            return null;
+                          },
+                        )
+                      else
+                        TextField(
+                          controller: controller,
+                          decoration: InputDecoration(
+                            labelText: columnName,
+                            border: const OutlineInputBorder(),
+                            hintText:
+                                isDateField
+                                    ? 'أدخل التاريخ بصيغة: يوم.شهر.سنة (مثال: 15.03.2024)'
+                                    : 'أدخل القيمة...',
+                            errorText: errorMessage,
+                          ),
+                          maxLines: isDateField ? 1 : 3,
+                          maxLength: isDateField ? 50 : 500,
+                          onChanged: (value) {
+                            if (isDateField) {
+                              setDialogState(() {
+                                if (value.isNotEmpty &&
+                                    !ValidationUtils.isValidDate(value)) {
+                                  errorMessage =
+                                      ValidationUtils.getDateValidationError(
+                                        value,
+                                      );
+                                } else {
+                                  errorMessage = null;
+                                }
+                              });
+                            }
+                          },
+                        ),
                       if (isDateField) ...[
                         const SizedBox(height: 8),
                         const Text(
@@ -578,7 +612,11 @@ class _EditableDataSource extends DataGridSource {
                       onPressed:
                           errorMessage == null
                               ? () {
-                                final value = controller.text.trim();
+                                final value =
+                                    isCategoryField
+                                        ? selectedCategory ?? ''
+                                        : controller.text.trim();
+
                                 if (isDateField &&
                                     value.isNotEmpty &&
                                     !ValidationUtils.isValidDate(value)) {
@@ -587,6 +625,11 @@ class _EditableDataSource extends DataGridSource {
                                         ValidationUtils.getDateValidationError(
                                           value,
                                         );
+                                  });
+                                } else if (isCategoryField && value.isEmpty) {
+                                  setDialogState(() {
+                                    errorMessage =
+                                        'يرجى اختيار فئة السلم الوظيفي';
                                   });
                                 } else {
                                   Navigator.of(context).pop(value);

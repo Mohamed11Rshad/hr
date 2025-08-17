@@ -6,13 +6,9 @@ import 'package:hr/widgets/config_button.dart';
 class MainUploadCard extends StatelessWidget {
   final String status;
   final bool isLoading;
-  final bool salaryScaleAExists;
-  final bool salaryScaleBExists;
-  final bool annualIncreaseAExists;
-  final bool annualIncreaseBExists;
   final bool statusExists;
   final bool staffAssignmentsExists;
-  final bool adjustmentsExists; // Add new property for Adjustments
+  final bool adjustmentsExists;
   final VoidCallback onMainUpload;
   final Function(String) onConfigUpload;
 
@@ -20,13 +16,9 @@ class MainUploadCard extends StatelessWidget {
     Key? key,
     required this.status,
     required this.isLoading,
-    required this.salaryScaleAExists,
-    required this.salaryScaleBExists,
-    required this.annualIncreaseAExists,
-    required this.annualIncreaseBExists,
     required this.statusExists,
     this.staffAssignmentsExists = false,
-    this.adjustmentsExists = false, // Add with default value
+    this.adjustmentsExists = false,
     required this.onMainUpload,
     required this.onConfigUpload,
   }) : super(key: key);
@@ -119,36 +111,6 @@ class MainUploadCard extends StatelessWidget {
                           title: 'Status',
                           exists: statusExists,
                           onPressed: () => onConfigUpload('Status'),
-                        ),
-                        const SizedBox(height: 15),
-
-                        ConfigButton(
-                          isLoading: isLoading,
-                          title: 'Salary Scale A',
-                          exists: salaryScaleAExists,
-                          onPressed: () => onConfigUpload('Salary Scale A'),
-                        ),
-                        const SizedBox(height: 15),
-                        ConfigButton(
-                          isLoading: isLoading,
-                          title: 'Salary Scale B',
-                          exists: salaryScaleBExists,
-                          onPressed: () => onConfigUpload('Salary Scale B'),
-                        ),
-                        const SizedBox(height: 15),
-
-                        ConfigButton(
-                          isLoading: isLoading,
-                          title: 'Annual Increase A',
-                          exists: annualIncreaseAExists,
-                          onPressed: () => onConfigUpload('Annual Increase A'),
-                        ),
-                        const SizedBox(height: 15),
-                        ConfigButton(
-                          isLoading: isLoading,
-                          title: 'Annual Increase B',
-                          exists: annualIncreaseBExists,
-                          onPressed: () => onConfigUpload('Annual Increase B'),
                         ),
                       ],
                     ),

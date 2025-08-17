@@ -1,5 +1,6 @@
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'promotion_calculation_service.dart';
+import '../utils/category_mapper.dart';
 
 class PromotionsDataService {
   final Database db;
@@ -932,10 +933,7 @@ class PromotionsDataService {
       final finalGrade = grade.isEmpty ? '0' : grade;
 
       // Determine which salary scale table to use
-      final salaryScaleTable =
-          payScaleArea.contains('Category B')
-              ? 'Salary_Scale_B'
-              : 'Salary_Scale_A';
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       // Get minimum and maximum salary for this grade
       final salaryScaleData = await db.query(

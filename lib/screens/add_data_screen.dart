@@ -19,8 +19,8 @@ import 'package:hr/screens/transferred_screen.dart';
 import 'package:hr/screens/termination_screen.dart';
 import 'package:hr/screens/terminated_screen.dart';
 import 'package:hr/screens/appraisal_screen.dart';
+import 'package:hr/widgets/salary_scales_upload_section.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:top_snackbar_flutter/top_snack_bar.dart';
 import 'package:hr/widgets/custom_snackbar.dart';
 
 class AddDataScreen extends StatefulWidget {
@@ -33,13 +33,10 @@ class AddDataScreen extends StatefulWidget {
 class _AddDataScreenState extends State<AddDataScreen> {
   String _status = 'جاهز لرفع ملف Excel';
   bool _isLoading = false;
-  bool _salaryScaleAExists = false;
-  bool _salaryScaleBExists = false;
-  bool _annualIncreaseAExists = false;
-  bool _annualIncreaseBExists = false;
   bool _statusExists = false;
   bool _staffAssignmentsExists = false;
   bool _adjustmentsExists = false;
+  Map<String, Map<String, bool>> _categoryTablesStatus = {};
   final FilePickerService _filePicker = FilePickerService();
   late ConfigSheetService _configSheetService;
   Database? _db;
@@ -205,11 +202,13 @@ class _AddDataScreenState extends State<AddDataScreen> {
   }
 
   bool _canAccessPromotions() {
-    return _salaryScaleAExists &&
-        _salaryScaleBExists &&
-        _annualIncreaseAExists &&
-        _annualIncreaseBExists &&
-        _statusExists;
+    // Check if any category has both salary scale and annual increase tables
+    final hasAnyCategoryComplete = _categoryTablesStatus.values.any(
+      (status) =>
+          (status['salaryScale'] ?? false) &&
+          (status['annualIncrease'] ?? false),
+    );
+    return hasAnyCategoryComplete && _statusExists;
   }
 
   bool _canAccessAppraisal() {
@@ -264,18 +263,26 @@ class _AddDataScreenState extends State<AddDataScreen> {
     return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 128),
-        child: MainUploadCard(
-          status: _status,
-          isLoading: _isLoading,
-          salaryScaleAExists: _salaryScaleAExists,
-          salaryScaleBExists: _salaryScaleBExists,
-          annualIncreaseAExists: _annualIncreaseAExists,
-          annualIncreaseBExists: _annualIncreaseBExists,
-          statusExists: _statusExists,
-          staffAssignmentsExists: _staffAssignmentsExists,
-          adjustmentsExists: _adjustmentsExists,
-          onMainUpload: _processExcelFile,
-          onConfigUpload: _processConfigSheet,
+        child: Column(
+          children: [
+            MainUploadCard(
+              status: _status,
+              isLoading: _isLoading,
+              statusExists: _statusExists,
+              staffAssignmentsExists: _staffAssignmentsExists,
+              adjustmentsExists: _adjustmentsExists,
+              onMainUpload: _processExcelFile,
+              onConfigUpload: _processConfigSheet,
+            ),
+            const SizedBox(height: 16),
+            SalaryScalesUploadSection(
+              categoryStatus: _categoryTablesStatus,
+              statusExists: _statusExists,
+              staffAssignmentsExists: _staffAssignmentsExists,
+              adjustmentsExists: _adjustmentsExists,
+              onConfigUpload: _processConfigSheet,
+            ),
+          ],
         ),
       ),
     );
@@ -429,15 +436,15 @@ class _AddDataScreenState extends State<AddDataScreen> {
     if (_db == null) return;
 
     final tables = await DatabaseService.getAvailableTables(_db!);
+    final categoryStatus = await DatabaseService.checkAllCategoryTablesExist(
+      _db!,
+    );
 
     setState(() {
-      _salaryScaleAExists = tables.contains('Salary_Scale_A');
-      _salaryScaleBExists = tables.contains('Salary_Scale_B');
-      _annualIncreaseAExists = tables.contains('Annual_Increase_A');
-      _annualIncreaseBExists = tables.contains('Annual_Increase_B');
       _statusExists = tables.contains('Status');
       _staffAssignmentsExists = tables.contains('Staff_Assignments');
       _adjustmentsExists = tables.contains('Adjustments');
+      _categoryTablesStatus = categoryStatus;
     });
   }
 

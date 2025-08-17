@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import '../utils/category_mapper.dart';
 
 class PromotionCalculationService {
   final Database db;
@@ -80,14 +81,10 @@ class PromotionCalculationService {
 
       // Determine which tables to use
       final payScaleArea = record['pay_scale_area_text']?.toString() ?? '';
-      final salaryScaleTable =
-          payScaleArea.contains('Category B')
-              ? 'Salary_Scale_B'
-              : 'Salary_Scale_A';
-      final annualIncreaseTable =
-          payScaleArea.contains('Category B')
-              ? 'Annual_Increase_B'
-              : 'Annual_Increase_A';
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
+      final annualIncreaseTable = CategoryMapper.getAnnualIncreaseTable(
+        payScaleArea,
+      );
 
       debugPrint("8888888888888888888888 salaryScaleTable: $salaryScaleTable");
 
@@ -184,10 +181,7 @@ class PromotionCalculationService {
     try {
       // Determine which tables to use
       final payScaleArea = record['pay_scale_area_text']?.toString() ?? '';
-      final salaryScaleTable =
-          payScaleArea.contains('Category B')
-              ? 'Salary_Scale_B'
-              : 'Salary_Scale_A';
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       // Get salary scale data for next grade
       final salaryScaleData = await db.query(

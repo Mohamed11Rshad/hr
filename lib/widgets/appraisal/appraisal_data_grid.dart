@@ -159,16 +159,16 @@ class AppraisalDataGridState extends State<AppraisalDataGrid> {
   double _getColumnWidth(String column) {
     switch (column) {
       case 'Badge_NO':
-        return 140;
+        return 180;
       case 'Employee_Name':
         return 220;
       case 'Bus_Line':
       case 'Depart_Text':
         return 180;
       case 'Grade':
-        return 120;
+        return 140;
       case 'Appraisal5':
-        return 150;
+        return 180;
       case 'Basic':
       case 'MIDPOINT':
       case 'MAXIMUM':
@@ -176,13 +176,12 @@ class AppraisalDataGridState extends State<AppraisalDataGrid> {
       case 'Actual_Increase':
       case 'Lump_Sum_Payment':
       case 'New_Basic':
-        return 160;
       case 'Total_Lump_Sum_12_Months':
         return 200;
       case 'New_Basic_System':
-        return 180;
+        return 200;
       default:
-        return 150;
+        return 180;
     }
   }
 
