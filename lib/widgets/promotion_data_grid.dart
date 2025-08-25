@@ -56,7 +56,10 @@ class PromotionDataGridState extends State<PromotionDataGrid> {
   late Map<String, double> _columnWidths = {};
   final ScrollController _horizontalController = ScrollController();
   Timer? _scrollTimer;
-  late _PromotionDataSource _dataSource; // Add this
+  late _PromotionDataSource _dataSource;
+  bool _isUpdating = false; // Flag for atomic updates
+  List<String> _visibleColumns =
+      []; // Store visible columns to ensure consistency
 
   @override
   void initState() {
@@ -66,11 +69,15 @@ class PromotionDataGridState extends State<PromotionDataGrid> {
   }
 
   void _createDataSource() {
+    // Calculate visible columns once and store them for consistency
+    _visibleColumns =
+        widget.columns
+            .where((col) => !widget.hiddenColumns.contains(col))
+            .toList();
+
     _dataSource = _PromotionDataSource(
       widget.data,
-      widget.columns
-          .where((col) => !widget.hiddenColumns.contains(col))
-          .toList(),
+      _visibleColumns, // Use the stored visible columns
       context: context,
       onRemoveEmployee: widget.onRemoveEmployee,
       onPromoteEmployee: widget.onPromoteEmployee,
@@ -87,11 +94,24 @@ class PromotionDataGridState extends State<PromotionDataGrid> {
   @override
   void didUpdateWidget(PromotionDataGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Recreate data source when data or columns change
+
+    // Only recreate data source when data or columns actually change
     if (oldWidget.data != widget.data ||
         !_listsEqual(oldWidget.columns, widget.columns) ||
         !_setsEqual(oldWidget.hiddenColumns, widget.hiddenColumns)) {
-      _createDataSource();
+      // Set updating flag to prevent rendering during update
+      _isUpdating = true;
+      setState(() {});
+
+      // Use a post-frame callback to ensure proper timing
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _createDataSource();
+          _initializeColumnWidths();
+          _isUpdating = false;
+          setState(() {});
+        }
+      });
     }
   }
 
@@ -170,6 +190,11 @@ class PromotionDataGridState extends State<PromotionDataGrid> {
 
   @override
   Widget build(BuildContext context) {
+    // Show loading indicator while updating to prevent column/cell mismatch
+    if (_isUpdating) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     return SfDataGridTheme(
       data: SfDataGridThemeData(
         headerColor: Colors.blue.shade700,
@@ -187,6 +212,9 @@ class PromotionDataGridState extends State<PromotionDataGrid> {
           clipBehavior: Clip.none,
           children: [
             SfDataGrid(
+              key: ValueKey(
+                '${widget.hiddenColumns.toString()}_${_dataSource.hashCode}',
+              ), // Force rebuild when columns change or data source changes
               source: _dataSource, // Use the stored data source
               columnWidthMode: ColumnWidthMode.none,
               allowSorting: true,
@@ -223,10 +251,10 @@ class PromotionDataGridState extends State<PromotionDataGrid> {
               },
               onFilterChanged: (DataGridFilterChangeDetails details) {
                 // Update filtered count and notify parent
-                final filteredCount = _dataSource.effectiveRows.length;
-                widget.onFilterChanged?.call(filteredCount);
-                // Force a rebuild to refresh the UI
-                setState(() {});
+                setState(() {
+                  final filteredCount = _dataSource.effectiveRows.length;
+                  widget.onFilterChanged?.call(filteredCount);
+                });
               },
               onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
                 setState(() {
@@ -288,10 +316,9 @@ class PromotionDataGridState extends State<PromotionDataGrid> {
   }
 
   List<GridColumn> _buildGridColumns() {
+    // Use the same visible columns that were used to create the data source
     final visibleColumns =
-        widget.columns.where((col) => !widget.hiddenColumns.contains(col)).map((
-          column,
-        ) {
+        _visibleColumns.map((column) {
           return GridColumn(
             columnName: column,
             minimumWidth: 20,
@@ -479,15 +506,14 @@ class _PromotionDataSource extends DataGridSource {
   void _buildDataGridRows() {
     _dataGridRows =
         _data.map<DataGridRow>((dataRow) {
-          return DataGridRow(
-            cells:
-                _columns.map<DataGridCell>((column) {
-                  return DataGridCell<String>(
-                    columnName: column,
-                    value: dataRow[column]?.toString() ?? '',
-                  );
-                }).toList(),
-          );
+          final cells =
+              _columns.map<DataGridCell>((column) {
+                return DataGridCell<String>(
+                  columnName: column,
+                  value: dataRow[column]?.toString() ?? '',
+                );
+              }).toList();
+          return DataGridRow(cells: cells);
         }).toList();
   }
 
@@ -500,10 +526,12 @@ class _PromotionDataSource extends DataGridSource {
 
     // Add safety check for valid row index
     if (rowIndex < 0 || rowIndex >= _data.length) {
-      // Return empty row if index is invalid
+      // Return empty row with proper cell count
+      final cellCount =
+          _columns.length + 2; // +2 for promote and remove buttons
       return DataGridRowAdapter(
         color: Colors.white,
-        cells: List.generate(_columns.length + 2, (index) => Container()),
+        cells: List.generate(cellCount, (index) => Container()),
       );
     }
 
@@ -517,12 +545,15 @@ class _PromotionDataSource extends DataGridSource {
     final hasBasicValidation = validationTypes.contains('basic_validation');
     final hasDateValidation = validationTypes.contains('date_validation');
 
-    print(
-      'Building row for record: Badge=${record['Badge_NO']}, highlighted=$isHighlighted, validationTypes=$validationTypes',
-    ); // Debug
-
+    // Only build cells for visible columns (matching the _columns list)
     final cells =
-        row.getCells().map<Widget>((dataGridCell) {
+        _columns.map<Widget>((column) {
+          // Find the corresponding cell in the row
+          final dataGridCell = row.getCells().firstWhere(
+            (cell) => cell.columnName == column,
+            orElse: () => DataGridCell(columnName: column, value: ''),
+          );
+
           Widget cellWidget;
 
           // Check if this is the Adjusted_Eligible_Date column
@@ -667,10 +698,6 @@ class _PromotionDataSource extends DataGridSource {
                 isHighlighted &&
                 hasBasicValidation &&
                 dataGridCell.columnName == 'Basic';
-
-            print(
-              'Cell ${dataGridCell.columnName}: shouldHighlightBasic=$shouldHighlightBasic (highlighted=$isHighlighted, hasBasicValidation=$hasBasicValidation)',
-            ); // Debug
 
             cellWidget = Container(
               alignment: Alignment.center,

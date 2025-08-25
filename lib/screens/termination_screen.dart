@@ -299,9 +299,16 @@ class _TerminationScreenState extends BaseDataScreenState<TerminationScreen> {
             columns: TerminationConstants.columns,
             columnNames: TerminationConstants.columnNames,
             hiddenColumns: _hiddenColumns,
-            onVisibilityChanged: () => setState(() {}),
+            onVisibilityChanged: _refreshDataSource,
           ),
     );
+  }
+
+  // Add method to refresh data source with current column visibility
+  void _refreshDataSource() {
+    setState(() {
+      // Force rebuild of the data grid with updated hidden columns
+    });
   }
 
   Future<void> _showAddTerminationDialog() async {

@@ -21,6 +21,12 @@ class TableDataSource extends DataGridSource {
     this.onCellSelected,
     this.onCopyCellContent,
   }) {
+    _buildDataGridRows();
+  }
+
+  List<DataGridRow> _dataGridRows = [];
+
+  void _buildDataGridRows() {
     _dataGridRows =
         _data.map<DataGridRow>((dataRow) {
           // Create mutable copy to avoid read-only issues
@@ -74,8 +80,6 @@ class TableDataSource extends DataGridSource {
         }).toList();
   }
 
-  List<DataGridRow> _dataGridRows = [];
-
   @override
   List<DataGridRow> get rows => _dataGridRows;
 
@@ -101,23 +105,29 @@ class TableDataSource extends DataGridSource {
 
     // Add safety check for valid data
     if (rowIndex < 0 || rowIndex >= _data.length) {
-      // Return empty row adapter with correct number of cells matching columns
+      // Return empty row adapter with correct number of cells matching visible columns + actions
+      final cellCount = _columns.length + (onDeleteRecord != null ? 1 : 0);
       return DataGridRowAdapter(
         color: Colors.white,
-        cells: List.generate(_columns.length + 1, (index) => Container()),
+        cells: List.generate(cellCount, (index) => Container()),
       );
     }
 
     final record = _data[rowIndex];
 
+    // Only build cells for visible columns (matching the _columns list)
     final cells =
-        row.getCells().map<Widget>((dataGridCell) {
+        _columns.map<Widget>((column) {
+          // Find the corresponding cell in the row
+          final dataGridCell = row.getCells().firstWhere(
+            (cell) => cell.columnName == column,
+            orElse: () => DataGridCell<String>(columnName: column, value: ''),
+          );
+
           // Check if this specific cell should be highlighted
           final isHighlighted =
-              _data[rowIndex].containsKey(
-                '${dataGridCell.columnName}_highlighted',
-              ) &&
-              _data[rowIndex]['${dataGridCell.columnName}_highlighted'] == true;
+              _data[rowIndex].containsKey('${column}_highlighted') &&
+              _data[rowIndex]['${column}_highlighted'] == true;
 
           return GestureDetector(
             onSecondaryTap: () {
@@ -156,7 +166,7 @@ class TableDataSource extends DataGridSource {
         }).toList();
 
     // Add delete button for actions column - only if we have columns and onDeleteRecord is provided
-    if (_columns.isNotEmpty && onDeleteRecord != null) {
+    if (onDeleteRecord != null) {
       cells.add(
         Container(
           alignment: Alignment.center,

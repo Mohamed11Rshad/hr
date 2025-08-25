@@ -29,9 +29,10 @@ class ExcelService {
       final counts = await _insertDataWithCounts(tableName, rows, headers);
       final insertedCount = counts['inserted'] ?? 0;
       final updatedCount = counts['updated'] ?? 0;
-      
+
       if (insertedCount > 0 && updatedCount > 0) {
-        result = 'تمت معالجة جدول "$tableName" - المضاف: $insertedCount، المحدث: $updatedCount';
+        result =
+            'تمت معالجة جدول "$tableName" - المضاف: $insertedCount، المحدث: $updatedCount';
       } else if (insertedCount > 0) {
         result = 'تمت الإضافة لجدول "$tableName" المضاف: $insertedCount';
       } else if (updatedCount > 0) {
@@ -175,6 +176,11 @@ class ExcelService {
     String tableName,
     List<String> headers,
   ) async {
+    print(
+      'Creating/updating table "$tableName" with ${headers.length} headers',
+    );
+    print('Headers: $headers');
+
     // Check if table exists
     final tables = await db.rawQuery(
       "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
@@ -183,32 +189,63 @@ class ExcelService {
 
     if (tables.isEmpty) {
       // Table doesn't exist, create it
+      print('Creating new table "$tableName"');
       final columns = headers
           .map((h) => '${_escapeColumnName(h)} TEXT')
           .join(', ');
-      await db.execute('''
+
+      final createTableSQL = '''
         CREATE TABLE "$tableName" (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           $columns,
           upload_date TEXT
         )
-      ''');
+      ''';
+
+      print('Create table SQL: $createTableSQL');
+
+      await db.execute(createTableSQL);
+      print('Table "$tableName" created successfully');
     } else {
       // Table exists, check if we need to add new columns
+      print('Table "$tableName" exists, checking for missing columns');
       final existingColumns = await db.rawQuery(
         'PRAGMA table_info("$tableName")',
       );
       final existingColumnNames =
           existingColumns.map((col) => col['name'].toString()).toList();
 
+      print('Existing columns in table: $existingColumnNames');
+
       // Add any missing columns
       for (final header in headers) {
         final escapedName = _escapeColumnName(header);
         final sanitizedName = escapedName.replaceAll('"', '');
-        if (!existingColumnNames.contains(sanitizedName)) {
-          await db.execute(
-            'ALTER TABLE "$tableName" ADD COLUMN $escapedName TEXT',
-          );
+
+        print(
+          'Checking header "$header" -> escaped: "$escapedName" -> sanitized: "$sanitizedName"',
+        );
+
+        // Check if column already exists (case-insensitive comparison)
+        final columnExists = existingColumnNames.any(
+          (existing) => existing.toLowerCase() == sanitizedName.toLowerCase(),
+        );
+
+        print('Column exists (case-insensitive): $columnExists');
+
+        if (!columnExists) {
+          try {
+            print('Adding new column $escapedName to table "$tableName"');
+            await db.execute(
+              'ALTER TABLE "$tableName" ADD COLUMN $escapedName TEXT',
+            );
+            print('Column $escapedName added successfully');
+          } catch (e) {
+            print('Error adding column $escapedName: $e');
+            rethrow; // Re-throw to see the actual error
+          }
+        } else {
+          print('Column "$sanitizedName" already exists, skipping');
         }
       }
     }
@@ -380,10 +417,43 @@ class ExcelService {
   }
 
   List<String> _processHeaders(List<Data?> headerRow) {
-    return headerRow
-        .map((cell) => cell?.value.toString().trim() ?? '')
-        .where((header) => header.isNotEmpty)
-        .toList();
+    final headers = <String>[];
+    final seenHeaders = <String>{};
+
+    print('Processing ${headerRow.length} headers from Excel file...');
+
+    for (int i = 0; i < headerRow.length; i++) {
+      final cell = headerRow[i];
+      final header = cell?.value.toString().trim() ?? '';
+
+      if (header.isEmpty) {
+        print('Skipping empty header at position $i');
+        continue;
+      }
+
+      print('Processing header at position $i: "$header"');
+
+      // Handle duplicate headers by adding a suffix
+      String uniqueHeader = header;
+      int counter = 1;
+      while (seenHeaders.contains(uniqueHeader)) {
+        print(
+          'Found duplicate header "$header", creating unique name: "${header}_$counter"',
+        );
+        uniqueHeader = '${header}_$counter';
+        counter++;
+      }
+
+      if (uniqueHeader != header) {
+        print('Header "$header" renamed to "$uniqueHeader" to avoid duplicate');
+      }
+
+      headers.add(uniqueHeader);
+      seenHeaders.add(uniqueHeader);
+    }
+
+    print('Final processed headers (${headers.length}): $headers');
+    return headers;
   }
 
   String _escapeColumnName(String name) {

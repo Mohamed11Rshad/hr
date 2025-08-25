@@ -435,15 +435,25 @@ class _AddDataScreenState extends State<AddDataScreen> {
   Future<void> _checkConfigTables() async {
     if (_db == null) return;
 
-    final tables = await DatabaseService.getAvailableTables(_db!);
     final categoryStatus = await DatabaseService.checkAllCategoryTablesExist(
       _db!,
     );
 
+    // Check if tables exist AND have data
+    final statusHasData = await DatabaseService.tableHasData(_db!, 'Status');
+    final staffAssignmentsHasData = await DatabaseService.tableHasData(
+      _db!,
+      'Staff_Assignments',
+    );
+    final adjustmentsHasData = await DatabaseService.tableHasData(
+      _db!,
+      'Adjustments',
+    );
+
     setState(() {
-      _statusExists = tables.contains('Status');
-      _staffAssignmentsExists = tables.contains('Staff_Assignments');
-      _adjustmentsExists = tables.contains('Adjustments');
+      _statusExists = statusHasData;
+      _staffAssignmentsExists = staffAssignmentsHasData;
+      _adjustmentsExists = adjustmentsHasData;
       _categoryTablesStatus = categoryStatus;
     });
   }

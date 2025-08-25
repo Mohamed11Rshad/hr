@@ -180,6 +180,9 @@ class _EditableDataGridState extends BaseDataGridState<EditableDataGrid> {
             child: Directionality(
               textDirection: TextDirection.ltr,
               child: SfDataGrid(
+                key: ValueKey(
+                  widget.hiddenColumns.toString(),
+                ), // Force rebuild when columns change
                 source: _dataSource!, // Use the stored data source
                 columnWidthMode: ColumnWidthMode.none,
                 allowSorting: true,
@@ -392,8 +395,15 @@ class _EditableDataSource extends DataGridSource {
   DataGridRowAdapter buildRow(DataGridRow row) {
     final rowIndex = _dataGridRows.indexOf(row);
 
+    // Only build cells for visible columns (matching the _columns list)
     final cells =
-        row.getCells().map<Widget>((dataGridCell) {
+        _columns.map<Widget>((column) {
+          // Find the corresponding cell in the row
+          final dataGridCell = row.getCells().firstWhere(
+            (cell) => cell.columnName == column,
+            orElse: () => DataGridCell(columnName: column, value: ''),
+          );
+
           return Container(
             alignment: Alignment.center,
             padding: const EdgeInsets.all(4.0),

@@ -42,6 +42,9 @@ class AppraisalDataGridState extends State<AppraisalDataGrid> {
   Timer? _scrollTimer;
   AppraisalDataSource? _dataSource;
   int _filteredRecordCount = 0;
+  bool _isUpdating = false; // Flag to prevent rendering during updates
+  List<String> _visibleColumns =
+      []; // Store visible columns to ensure consistency
 
   @override
   void initState() {
@@ -57,11 +60,15 @@ class AppraisalDataGridState extends State<AppraisalDataGrid> {
   }
 
   void _createDataSource() {
+    // Calculate visible columns once and store them for consistency
+    _visibleColumns =
+        widget.columns
+            .where((col) => !widget.hiddenColumns.contains(col))
+            .toList();
+
     _dataSource = AppraisalDataSource(
       widget.data,
-      widget.columns
-          .where((col) => !widget.hiddenColumns.contains(col))
-          .toList(),
+      _visibleColumns, // Use the stored visible columns
       onCopyCellContent: widget.onCopyCellContent,
       context: context,
       onCellValueChanged: (rowIndex, columnName, newValue) {
@@ -77,51 +84,76 @@ class AppraisalDataGridState extends State<AppraisalDataGrid> {
 
   // Add method to get the actual filtered data
   List<Map<String, dynamic>> getFilteredData() {
-    if (_dataSource == null) return widget.data;
-
-    final effectiveRows = _dataSource!.effectiveRows;
-    final filteredData = <Map<String, dynamic>>[];
-
-    // Map each filtered row back to original data using the row index
-    for (final row in effectiveRows) {
-      final rowIndex = _dataSource!.rows.indexOf(row);
-      if (rowIndex >= 0 && rowIndex < widget.data.length) {
-        filteredData.add(widget.data[rowIndex]);
-      }
+    if (_dataSource == null) {
+      print('AppraisalDataGrid: DataSource is null in getFilteredData');
+      return widget.data;
     }
 
-    return filteredData;
+    try {
+      final effectiveRows = _dataSource!.effectiveRows;
+      print(
+        'AppraisalDataGrid: effectiveRows length in getFilteredData: ${effectiveRows.length}',
+      );
+      final filteredData = <Map<String, dynamic>>[];
+
+      // Map each filtered row back to original data using the row index
+      for (final row in effectiveRows) {
+        final rowIndex = _dataSource!.rows.indexOf(row);
+        if (rowIndex >= 0 && rowIndex < widget.data.length) {
+          filteredData.add(widget.data[rowIndex]);
+        }
+      }
+
+      print(
+        'AppraisalDataGrid: Returning ${filteredData.length} filtered records',
+      );
+      return filteredData;
+    } catch (e) {
+      print('AppraisalDataGrid: Error in getFilteredData: $e');
+      return widget.data;
+    }
   }
 
   // Add refresh method
   void refresh() {
+    // Instead of recreating data source, just notify it of changes
+    _dataSource?.notifyListeners();
     setState(() {
-      _createDataSource();
+      // Update filtered count
+      if (_dataSource != null) {
+        _filteredRecordCount = _dataSource!.effectiveRows.length;
+      }
     });
   }
 
   @override
   void didUpdateWidget(AppraisalDataGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Recreate data source when data or columns change
+
+    // Only recreate data source when data or columns actually change
     if (oldWidget.data != widget.data ||
         !_listsEqual(oldWidget.columns, widget.columns) ||
         !_setsEqual(oldWidget.hiddenColumns, widget.hiddenColumns)) {
-      _createDataSource();
-      _initializeColumnWidths();
-      // Update filtered count when data changes
+      print('AppraisalDataGrid: Changes detected, recreating data source');
+
+      // Set updating flag and clear data source to prevent mismatched rendering
+      _isUpdating = true;
+      _dataSource = null;
+
+      // Force immediate rebuild with null data source
+      setState(() {});
+
+      // Use a post-frame callback to recreate the data source
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          setState(() {
-            _filteredRecordCount =
-                _dataSource?.effectiveRows.length ?? widget.data.length;
-          });
-          // Notify parent screen
-          if (widget.onFilterChanged != null) {
-            widget.onFilterChanged!(_filteredRecordCount);
-          }
+          _createDataSource();
+          _initializeColumnWidths();
+          _isUpdating = false;
+          setState(() {});
         }
       });
+    } else {
+      // No changes detected, skipping recreation
     }
   }
 
@@ -186,10 +218,9 @@ class AppraisalDataGridState extends State<AppraisalDataGrid> {
   }
 
   List<GridColumn> _buildGridColumns() {
+    // Use the same visible columns that were used to create the data source
     final visibleColumns =
-        widget.columns.where((col) => !widget.hiddenColumns.contains(col)).map((
-          column,
-        ) {
+        _visibleColumns.map((column) {
           return GridColumn(
             columnName: column,
             width: _columnWidths[column] ?? _getColumnWidth(column),
@@ -299,63 +330,74 @@ class AppraisalDataGridState extends State<AppraisalDataGrid> {
             _buildRecordCountBar(),
             const SizedBox(height: 8.0),
             Expanded(
-              child: SfDataGrid(
-                source: _dataSource!,
-                columnWidthMode: ColumnWidthMode.none,
-                allowSorting: true,
-                allowFiltering: true,
-                allowColumnsDragging: true,
-                allowColumnsResizing: true,
-                columnResizeMode: ColumnResizeMode.onResize,
-                selectionMode: SelectionMode.single,
-                navigationMode: GridNavigationMode.cell,
-                showHorizontalScrollbar: true,
-                showVerticalScrollbar: true,
-                isScrollbarAlwaysShown: true,
-                gridLinesVisibility: GridLinesVisibility.both,
-                headerGridLinesVisibility: GridLinesVisibility.both,
-                rowHeight: 50,
-                headerRowHeight: 55,
-                columnDragFeedbackBuilder: (context, column) {
-                  return Container(
-                    width: _columnWidths[column.columnName] ?? 180,
-                    height: 50,
-                    color: Colors.blue.shade700,
-                    child: Center(
-                      child: Text(
-                        AppraisalConstants.columnNames[column.columnName] ??
-                            column.columnName,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          decoration: TextDecoration.none,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  );
-                },
-                onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
-                  setState(() {
-                    _columnWidths[details.column.columnName] = details.width;
-                  });
-                  return true;
-                },
-                onFilterChanged: (DataGridFilterChangeDetails details) {
-                  // Update filtered count and force UI refresh
-                  setState(() {
-                    _filteredRecordCount = _dataSource!.effectiveRows.length;
-                  });
+              child:
+                  _isUpdating || _dataSource == null
+                      ? const Center(child: CircularProgressIndicator())
+                      : SfDataGrid(
+                        key: ValueKey(
+                          '${widget.hiddenColumns.toString()}_${_dataSource.hashCode}',
+                        ), // Force rebuild when columns change or data source changes
+                        source: _dataSource!,
+                        columnWidthMode: ColumnWidthMode.none,
+                        allowSorting: true,
+                        allowFiltering: true,
+                        allowColumnsDragging: true,
+                        allowColumnsResizing: true,
+                        allowPullToRefresh: true,
+                        columnResizeMode: ColumnResizeMode.onResize,
+                        selectionMode: SelectionMode.single,
+                        navigationMode: GridNavigationMode.cell,
+                        showHorizontalScrollbar: true,
+                        showVerticalScrollbar: true,
+                        isScrollbarAlwaysShown: true,
+                        gridLinesVisibility: GridLinesVisibility.both,
+                        headerGridLinesVisibility: GridLinesVisibility.both,
+                        rowHeight: 50,
+                        headerRowHeight: 55,
+                        columnDragFeedbackBuilder: (context, column) {
+                          return Container(
+                            width: _columnWidths[column.columnName] ?? 180,
+                            height: 50,
+                            color: Colors.blue.shade700,
+                            child: Center(
+                              child: Text(
+                                AppraisalConstants.columnNames[column
+                                        .columnName] ??
+                                    column.columnName,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  decoration: TextDecoration.none,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                        onColumnResizeUpdate: (
+                          ColumnResizeUpdateDetails details,
+                        ) {
+                          setState(() {
+                            _columnWidths[details.column.columnName] =
+                                details.width;
+                          });
+                          return true;
+                        },
+                        onFilterChanged: (DataGridFilterChangeDetails details) {
+                          setState(() {
+                            _filteredRecordCount =
+                                _dataSource!.effectiveRows.length;
+                          });
 
-                  // Notify parent screen
-                  if (widget.onFilterChanged != null) {
-                    widget.onFilterChanged!(_filteredRecordCount);
-                  }
-                },
-                onColumnDragging: widget.onColumnDragging,
-                columns: _buildGridColumns(),
-              ),
+                          // Notify parent screen
+                          if (widget.onFilterChanged != null) {
+                            widget.onFilterChanged!(_filteredRecordCount);
+                          }
+                        },
+                        onColumnDragging: widget.onColumnDragging,
+                        columns: _buildGridColumns(),
+                      ),
             ),
           ],
         ),

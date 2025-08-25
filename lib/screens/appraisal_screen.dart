@@ -32,7 +32,7 @@ class _AppraisalScreenState extends BaseDataScreenState<AppraisalScreen> {
   List<String> _columns = List.from(AppraisalConstants.columns);
 
   // GlobalKey for accessing the data grid
-  final GlobalKey<AppraisalDataGridState> _appraisalDataGridKey =
+  GlobalKey<AppraisalDataGridState> _appraisalDataGridKey =
       GlobalKey<AppraisalDataGridState>();
 
   @override
@@ -119,7 +119,8 @@ class _AppraisalScreenState extends BaseDataScreenState<AppraisalScreen> {
 
   @override
   Widget buildContent() {
-    return AppraisalDataGrid(
+    // Recreate the widget instance every time to ensure didUpdateWidget is called
+    final appraisalDataGrid = AppraisalDataGrid(
       key: _appraisalDataGridKey,
       data: _appraisalData,
       columns: _columns,
@@ -133,6 +134,8 @@ class _AppraisalScreenState extends BaseDataScreenState<AppraisalScreen> {
       },
       onCellValueChanged: _onCellValueChanged,
     );
+
+    return appraisalDataGrid;
   }
 
   bool _onColumnDragging(DataGridColumnDragDetails details) {
@@ -258,11 +261,18 @@ class _AppraisalScreenState extends BaseDataScreenState<AppraisalScreen> {
             columns: _columns,
             columnNames: AppraisalConstants.columnNames,
             hiddenColumns: _hiddenColumns,
-            onVisibilityChanged: () {
-              setState(() {});
-            },
+            onVisibilityChanged: _refreshDataSource,
           ),
     );
+  }
+
+  // Add method to refresh data source with current column visibility
+  void _refreshDataSource() {
+    setState(() {
+      // Force rebuild of the data grid with updated hidden columns
+      // Increment a key to force widget recreation
+      _appraisalDataGridKey = GlobalKey<AppraisalDataGridState>();
+    });
   }
 
   @override

@@ -319,20 +319,38 @@ class PromotionsDataService {
 
       // Get data from base table - only latest record for each badge number
       final placeholders = badgeNumbers.map((_) => '?').join(',');
-      final data = await db.rawQuery('''
-        SELECT t1.* FROM "$baseTableName" t1
-        INNER JOIN (
-          SELECT "$badgeColumn", MAX(id) as max_id
-          FROM "$baseTableName"
-          WHERE "$badgeColumn" IN ($placeholders)
-          GROUP BY "$badgeColumn"
-        ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.id = t2.max_id
-        ORDER BY CAST(t1."$badgeColumn" AS INTEGER) ASC
-      ''', badgeNumbers);
 
-      print(
-        'Retrieved ${data.length} records from base table (latest records only)',
+      // Check if upload_date column exists for getting latest records
+      final allColumns = await getAvailableColumns();
+      final hasUploadDate = allColumns.any(
+        (col) => col.toLowerCase().contains('upload_date'),
       );
+
+      String query;
+      if (hasUploadDate) {
+        // If upload_date exists, get latest records by upload_date
+        query = '''
+          SELECT t1.* FROM "$baseTableName" t1
+          INNER JOIN (
+            SELECT "$badgeColumn", MAX(upload_date) as max_date
+            FROM "$baseTableName"
+            WHERE "$badgeColumn" IN ($placeholders)
+            GROUP BY "$badgeColumn"
+          ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.upload_date = t2.max_date
+          ORDER BY CAST(t1."$badgeColumn" AS INTEGER) ASC
+        ''';
+      } else {
+        // If no upload_date, just get all records (assuming Badge_NO is unique)
+        query = '''
+          SELECT * FROM "$baseTableName"
+          WHERE "$badgeColumn" IN ($placeholders)
+          ORDER BY CAST("$badgeColumn" AS INTEGER) ASC
+        ''';
+      }
+
+      final data = await db.rawQuery(query, badgeNumbers);
+
+      print('Retrieved ${data.length} records from base table');
 
       // Get status data for all badge numbers
       final statusData = await _getStatusData(badgeNumbers);
@@ -612,17 +630,36 @@ class PromotionsDataService {
         return [];
       }
 
-      // Query the base table to find which badge numbers exist (latest records only)
+      // Query the base table to find which badge numbers exist
+      // Since base sheet doesn't have id column, we'll use upload_date or just get latest records
       final placeholders = badgeNumbers.map((_) => '?').join(',');
-      final result = await db.rawQuery('''
-        SELECT DISTINCT t1."$badgeColumn" FROM "$baseTableName" t1
-        INNER JOIN (
-          SELECT "$badgeColumn", MAX(id) as max_id
-          FROM "$baseTableName"
+
+      // Check if upload_date column exists
+      final hasUploadDate = allColumns.any(
+        (col) => col.toLowerCase().contains('upload_date'),
+      );
+
+      String query;
+      if (hasUploadDate) {
+        // If upload_date exists, get latest records by upload_date
+        query = '''
+          SELECT DISTINCT t1."$badgeColumn" FROM "$baseTableName" t1
+          INNER JOIN (
+            SELECT "$badgeColumn", MAX(upload_date) as max_date
+            FROM "$baseTableName"
+            WHERE "$badgeColumn" IN ($placeholders)
+            GROUP BY "$badgeColumn"
+          ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.upload_date = t2.max_date
+        ''';
+      } else {
+        // If no upload_date, just get distinct badge numbers
+        query = '''
+          SELECT DISTINCT "$badgeColumn" FROM "$baseTableName"
           WHERE "$badgeColumn" IN ($placeholders)
-          GROUP BY "$badgeColumn"
-        ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.id = t2.max_id
-      ''', badgeNumbers);
+        ''';
+      }
+
+      final result = await db.rawQuery(query, badgeNumbers);
 
       final foundBadges =
           result
@@ -631,7 +668,7 @@ class PromotionsDataService {
               .toList();
 
       print(
-        'Found ${foundBadges.length} employees out of ${badgeNumbers.length} requested (latest records only)',
+        'Found ${foundBadges.length} employees out of ${badgeNumbers.length} requested',
       );
       return foundBadges;
     } catch (e) {
@@ -708,19 +745,38 @@ class PromotionsDataService {
       );
 
       // Query the base table for this specific employee (latest record only)
-      final result = await db.rawQuery(
-        '''
-        SELECT t1.* FROM "$baseTableName" t1
-        INNER JOIN (
-          SELECT "$badgeColumn", MAX(id) as max_id
-          FROM "$baseTableName"
-          WHERE "$badgeColumn" = ?
-          GROUP BY "$badgeColumn"
-        ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.id = t2.max_id
-        LIMIT 1
-      ''',
-        [badgeNo],
+      // Check if upload_date column exists for getting latest records
+      final hasUploadDate = allColumns.any(
+        (col) => col.toLowerCase().contains('upload_date'),
       );
+
+      String query;
+      List<dynamic> params;
+
+      if (hasUploadDate) {
+        // If upload_date exists, get latest record by upload_date
+        query = '''
+          SELECT t1.* FROM "$baseTableName" t1
+          INNER JOIN (
+            SELECT "$badgeColumn", MAX(upload_date) as max_date
+            FROM "$baseTableName"
+            WHERE "$badgeColumn" = ?
+            GROUP BY "$badgeColumn"
+          ) t2 ON t1."$badgeColumn" = t2."$badgeColumn" AND t1.upload_date = t2.max_date
+          LIMIT 1
+        ''';
+        params = [badgeNo];
+      } else {
+        // If no upload_date, just get the record (assuming Badge_NO is unique)
+        query = '''
+          SELECT * FROM "$baseTableName"
+          WHERE "$badgeColumn" = ?
+          LIMIT 1
+        ''';
+        params = [badgeNo];
+      }
+
+      final result = await db.rawQuery(query, params);
 
       return result.isNotEmpty ? result.first : null;
     } catch (e) {
@@ -917,7 +973,7 @@ class PromotionsDataService {
       final oldBasic =
           double.tryParse(baseData['Basic']?.toString() ?? '0') ?? 0;
       final gradeRaw = baseData['Grade']?.toString() ?? '';
-      final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
+      final payScaleArea = baseData['Pay_scale_area_text']?.toString() ?? '';
 
       if (oldBasic == 0 || gradeRaw.isEmpty) {
         print(

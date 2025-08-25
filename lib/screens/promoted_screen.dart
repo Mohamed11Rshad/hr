@@ -951,8 +951,15 @@ class _PromotedDataSource extends DataGridSource {
     final rowIndex = _dataGridRows.indexOf(row);
     final record = _data[rowIndex];
 
+    // Only build cells for visible columns (matching the _columns list)
     final cells =
-        row.getCells().map<Widget>((dataGridCell) {
+        _columns.map<Widget>((column) {
+          // Find the corresponding cell in the row
+          final dataGridCell = row.getCells().firstWhere(
+            (cell) => cell.columnName == column,
+            orElse: () => DataGridCell(columnName: column, value: ''),
+          );
+
           return GestureDetector(
             onSecondaryTap: () {
               final cellValue = dataGridCell.value.toString();

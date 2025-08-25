@@ -7,12 +7,98 @@ class TerminationDataService {
     double amount,
     double annualIncrement,
     double maximum,
+    Map<String, dynamic> employeeRecord,
   ) {
+    // First calculate the normal actual increase
+    double actualIncrease;
     if (amount + annualIncrement > maximum) {
-      return maximum - amount;
+      actualIncrease = maximum - amount;
     } else {
-      return annualIncrement;
+      actualIncrease = annualIncrement;
     }
+
+    // Check if employee joined in the current year and apply pro-rating
+    final joinDateStr = employeeRecord['Date_of_Join']?.toString() ?? '';
+    if (joinDateStr.isNotEmpty) {
+      try {
+        final joinDate = _parseJoinDate(joinDateStr);
+        final currentYear = DateTime.now().year;
+
+        // If employee joined in the current year, apply pro-rating
+        if (joinDate.year == currentYear) {
+          final dailyIncrement = annualIncrement / 365;
+          final workingDays = _calculateWorkingDaysFromJoinToYearEnd(joinDate);
+          final maxAllowedIncrease = dailyIncrement * workingDays;
+
+          // Cap the actual increase to the pro-rated amount
+          if (actualIncrease > maxAllowedIncrease) {
+            actualIncrease = maxAllowedIncrease;
+          }
+
+          debugPrint('Employee joined in $currentYear: ${joinDate.toString()}');
+          debugPrint('Working days from join to year end: $workingDays');
+          debugPrint('Daily increment: $dailyIncrement');
+          debugPrint('Max allowed increase: $maxAllowedIncrease');
+          debugPrint('Final actual increase: $actualIncrease');
+        }
+      } catch (e) {
+        debugPrint('Error parsing join date "$joinDateStr": $e');
+        // Continue with normal calculation if date parsing fails
+      }
+    }
+
+    // Ensure actual increase is never negative - zero is the minimum value
+    return actualIncrease < 0 ? 0.0 : actualIncrease;
+  }
+
+  DateTime _parseJoinDate(String dateStr) {
+    // Handle various date formats
+    dateStr = dateStr.trim();
+
+    // Try different date formats
+    final formats = [
+      RegExp(r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$'), // DD.MM.YYYY
+      RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$'), // DD/MM/YYYY
+      RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})$'), // YYYY-MM-DD
+    ];
+
+    for (final format in formats) {
+      final match = format.firstMatch(dateStr);
+      if (match != null) {
+        int day, month, year;
+
+        if (format == formats[2]) {
+          // YYYY-MM-DD
+          year = int.parse(match.group(1)!);
+          month = int.parse(match.group(2)!);
+          day = int.parse(match.group(3)!);
+        } else {
+          // DD.MM.YYYY or DD/MM/YYYY
+          day = int.parse(match.group(1)!);
+          month = int.parse(match.group(2)!);
+          year = int.parse(match.group(3)!);
+        }
+
+        return DateTime(year, month, day);
+      }
+    }
+
+    throw FormatException('Unable to parse date: $dateStr');
+  }
+
+  int _calculateWorkingDaysFromJoinToYearEnd(DateTime joinDate) {
+    final currentYear = joinDate.year;
+    final yearEnd = DateTime(currentYear, 12, 31);
+
+    // If join date is after year end (shouldn't happen), return 0
+    if (joinDate.isAfter(yearEnd)) {
+      return 0;
+    }
+
+    // Calculate the difference in days, including both start and end dates
+    final difference = yearEnd.difference(joinDate).inDays + 1;
+
+    return difference;
   }
 
   Future<double> _calculateMaximumForCurrentGrade(
@@ -27,7 +113,7 @@ class TerminationDataService {
       }
 
       // Determine salary scale table using CategoryMapper
-      final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
+      final payScaleArea = baseData['Pay_scale_area_text']?.toString() ?? '';
       final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       // Get salary scale data for maximum calculation using current grade
@@ -251,44 +337,69 @@ class TerminationDataService {
           );
           mutableTermination['New_Basic'] = newBasic.toStringAsFixed(2);
 
-          // Calculate Current Lump sum (like appraisal sheet)
-          // Use the same logic: Lump sum = annualIncrement - actualIncrease
-          // Actual Increase = if (oldBasic + annualIncrement > maximum) maximum - oldBasic else annualIncrement
-          final maximum = await _calculateMaximumForCurrentGrade(baseData);
-          final actualIncrease = _calculateActualIncrease(
-            oldBasic.toDouble(),
-            annualIncrement.toDouble(),
-            maximum.toDouble(),
-          );
-          final currentLumpSum = annualIncrement - actualIncrease;
-          mutableTermination['Current_Lump_Sum'] = currentLumpSum
-              .toStringAsFixed(2);
+          // Calculate Current Lump sum (using appraisal sheet logic)
+          // Get employee data with appraisal grade for lump sum calculation
+          final baseDataWithAppraisalGrade =
+              await _getEmployeeWithAppraisalGrade(badgeNo);
+          if (baseDataWithAppraisalGrade != null) {
+            final appraisalAnnualIncrement =
+                await _calculateAnnualIncrementForCurrentGrade(
+                  baseDataWithAppraisalGrade,
+                );
+            final maximum = await _calculateMaximumForCurrentGrade(
+              baseDataWithAppraisalGrade,
+            );
+            final actualIncrease = _calculateActualIncrease(
+              oldBasic.toDouble(),
+              appraisalAnnualIncrement,
+              maximum.toDouble(),
+              baseDataWithAppraisalGrade,
+            );
+            debugPrint(
+              "------------------- appraisalAnnualIncrement: $appraisalAnnualIncrement",
+            );
+            debugPrint("------------------- actualIncrease: $actualIncrease");
 
-          // Amount/12
-          final amountDiv12 = currentLumpSum / 12;
-          mutableTermination['Amount_Div_12'] = amountDiv12.toStringAsFixed(2);
+            final currentLumpSum = appraisalAnnualIncrement - actualIncrease;
+            mutableTermination['Current_Lump_Sum'] = currentLumpSum
+                .toStringAsFixed(2);
 
-          // (Amount/12)/Month
-          final amountDiv12PerMonth = amountDiv12 / 31;
-          mutableTermination['Amount_Div_12_Per_Month'] = amountDiv12PerMonth
-              .toStringAsFixed(4);
+            // Amount/12
+            final amountDiv12 = currentLumpSum / 12;
+            mutableTermination['Amount_Div_12'] = amountDiv12.toStringAsFixed(
+              2,
+            );
 
-          // Calculate No of Months: the previous month of month in date in TERM/DATE
-          final noOfMonths = _calculateNoOfMonths(terminationDate);
-          mutableTermination['No_of_Months'] = noOfMonths.toString();
+            // (Amount/12)/Month
+            final amountDiv12PerMonth = amountDiv12 / 31;
+            mutableTermination['Amount_Div_12_Per_Month'] = amountDiv12PerMonth
+                .toStringAsFixed(4);
 
-          // Calculate No of Days: days in TERM/DATE - 1
-          final noOfDays = _calculateNoOfDays(terminationDate);
-          mutableTermination['No_of_Days'] = noOfDays.toString();
+            // Calculate No of Months: the previous month of month in date in TERM/DATE
+            final noOfMonths = _calculateNoOfMonths(terminationDate);
+            mutableTermination['No_of_Months'] = noOfMonths.toString();
 
-          // Calculate New Lump Sum: (Amount/12) * (No of Months) + ((Amount/12)/Month) * No of Days
-          final newLumpSum = _calculateNewLumpSum(
-            amountDiv12,
-            amountDiv12PerMonth,
-            noOfMonths,
-            noOfDays,
-          );
-          mutableTermination['New_Lump_Sum'] = newLumpSum.toStringAsFixed(2);
+            // Calculate No of Days: days in TERM/DATE - 1
+            final noOfDays = _calculateNoOfDays(terminationDate);
+            mutableTermination['No_of_Days'] = noOfDays.toString();
+
+            // Calculate New Lump Sum: (Amount/12) * (No of Months) + ((Amount/12)/Month) * No of Days
+            final newLumpSum = _calculateNewLumpSum(
+              amountDiv12,
+              amountDiv12PerMonth,
+              noOfMonths,
+              noOfDays,
+            );
+            mutableTermination['New_Lump_Sum'] = newLumpSum.toStringAsFixed(2);
+          } else {
+            // Fallback if appraisal grade data not found
+            mutableTermination['Current_Lump_Sum'] = '0.00';
+            mutableTermination['Amount_Div_12'] = '0.00';
+            mutableTermination['Amount_Div_12_Per_Month'] = '0.0000';
+            mutableTermination['No_of_Months'] = '0';
+            mutableTermination['No_of_Days'] = '0';
+            mutableTermination['New_Lump_Sum'] = '0.00';
+          }
         } else {
           // Set default values if employee not found
           mutableTermination['Employee_Name'] = '';
@@ -376,7 +487,7 @@ class TerminationDataService {
           int.tryParse(grade.replaceAll(RegExp(r'^0+'), '')) ?? 0;
 
       // Determine salary scale and annual increase tables using CategoryMapper
-      final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
+      final payScaleArea = baseData['Pay_scale_area_text']?.toString() ?? '';
       final annualIncreaseTable = CategoryMapper.getAnnualIncreaseTable(
         payScaleArea,
       );
@@ -426,6 +537,80 @@ class TerminationDataService {
       return potentialIncrement < 0 ? 0 : potentialIncrement;
     } catch (e) {
       print('Error calculating annual increment: $e');
+      return 0.0;
+    }
+  }
+
+  // Calculate annual increment using appraisal logic (for lump sum calculation)
+  Future<double> _calculateAnnualIncrementForCurrentGrade(
+    Map<String, dynamic> baseData,
+  ) async {
+    try {
+      var grade = baseData['Grade']?.toString() ?? '';
+      if (grade.isEmpty) return 0.0;
+
+      if (grade.startsWith('0')) {
+        grade = grade.substring(1); // Remove leading zero if present
+      }
+
+      // Determine salary scale and annual increase tables using CategoryMapper
+      final payScaleArea = baseData['Pay_scale_area_text']?.toString() ?? '';
+      final annualIncreaseTable = CategoryMapper.getAnnualIncreaseTable(
+        payScaleArea,
+      );
+      final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
+
+      // Get salary scale data for midpoint calculation using current grade
+      final salaryScaleData = await db.query(
+        salaryScaleTable,
+        where: 'Grade = ?',
+        whereArgs: [grade],
+      );
+
+      if (salaryScaleData.isEmpty) return 0.0;
+
+      final midpoint =
+          double.tryParse(
+            salaryScaleData.first['midpoint']?.toString() ?? '0',
+          ) ??
+          0.0;
+
+      // Determine midpoint status
+      final oldBasic =
+          double.tryParse(baseData['Basic']?.toString() ?? '0')?.round() ?? 0;
+      final fourPercentAdj = oldBasic * 0.04;
+      final oldBasePlusAdj = oldBasic + fourPercentAdj;
+      final midpointStatus = (oldBasePlusAdj < midpoint) ? 'b' : 'a';
+
+      // Get annual increase data - use a default appraisal if not set
+      var appraisalList = baseData['Appraisal5']?.toString().split('-');
+      String appraisalValue;
+      if (appraisalList != null && appraisalList.length > 1) {
+        appraisalValue = appraisalList[1].replaceAll('+', 'p');
+      } else {
+        appraisalValue = '3';
+      }
+
+      // Get annual increase data for current grade
+      final annualIncreaseData = await db.query(
+        annualIncreaseTable,
+        where: 'Grade = ?',
+        whereArgs: [grade],
+      );
+
+      if (annualIncreaseData.isEmpty) return 0.0;
+
+      final potentialIncrement =
+          double.tryParse(
+            annualIncreaseData.first['${appraisalValue}_$midpointStatus']
+                    ?.toString() ??
+                '0',
+          ) ??
+          0.0;
+
+      return potentialIncrement < 0 ? 0.0 : potentialIncrement;
+    } catch (e) {
+      debugPrint('Error calculating annual increment for current grade: $e');
       return 0.0;
     }
   }
@@ -623,6 +808,41 @@ class TerminationDataService {
     }
   }
 
+  // Get employee data with appraisal grade for lump sum calculation only
+  Future<Map<String, dynamic>?> _getEmployeeWithAppraisalGrade(
+    String badgeNo,
+  ) async {
+    try {
+      final tableInfo = await db.rawQuery(
+        'PRAGMA table_info("$baseTableName")',
+      );
+      final badgeColumn = tableInfo
+          .map((col) => col['name'].toString())
+          .firstWhere(
+            (name) => name.toLowerCase().contains('badge'),
+            orElse: () => 'Badge_NO',
+          );
+
+      // Use the same logic as appraisal service to get grade from appraisal table if exists
+      final query = '''
+        SELECT b.*, 
+               COALESCE(a_table.grade, b.Grade) as Grade,
+               COALESCE(a_table.new_basic_system, '') as New_Basic_System
+        FROM "$baseTableName" b
+        LEFT JOIN appraisal a_table ON b."$badgeColumn" = a_table.badge_no
+        WHERE b."$badgeColumn" = ?
+        LIMIT 1
+        ''';
+
+      final result = await db.rawQuery(query, [badgeNo]);
+
+      return result.isNotEmpty ? result.first : null;
+    } catch (e) {
+      print('Error getting employee with appraisal grade: $e');
+      return null;
+    }
+  }
+
   String _formatAsInteger(String value) {
     if (value.isEmpty) return '';
 
@@ -718,7 +938,7 @@ class TerminationDataService {
   ) async {
     try {
       // Determine salary scale table using CategoryMapper
-      final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
+      final payScaleArea = baseData['Pay_scale_area_text']?.toString() ?? '';
       final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       // Get salary scale data for midpoint calculation

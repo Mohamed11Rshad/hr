@@ -52,11 +52,9 @@ class SalaryScalesUploadSection extends StatelessWidget {
                 ],
               ),
             ),
-
             const SizedBox(height: 20),
             ...CategoryMapper.getAllCategories().map((category) {
-              final status =
-                  categoryStatus[category] ??
+              final status = categoryStatus[category] ??
                   {'salaryScale': false, 'annualIncrease': false};
               return _buildCategorySection(context, category, status);
             }),
@@ -151,7 +149,6 @@ class SalaryScalesUploadSection extends StatelessWidget {
   ) {
     return ElevatedButton.icon(
       onPressed: onPressed,
-
       icon: Icon(
         exists ? Icons.check_circle : icon,
         size: 18.w.clamp(16, 24),
@@ -167,7 +164,6 @@ class SalaryScalesUploadSection extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 12,
-
               fontWeight: FontWeight.w600,
               color: exists ? Colors.white : AppColors.primaryColor,
             ),
@@ -179,10 +175,9 @@ class SalaryScalesUploadSection extends StatelessWidget {
             tableName,
             style: TextStyle(
               fontSize: 10,
-              color:
-                  exists
-                      ? Colors.white.withValues(alpha: 0.9)
-                      : AppColors.primaryColor.withValues(alpha: 0.7),
+              color: exists
+                  ? Colors.white.withValues(alpha: 0.9)
+                  : AppColors.primaryColor.withValues(alpha: 0.7),
               fontFamily: 'monospace',
             ),
           ),

@@ -54,6 +54,56 @@ abstract class BaseDataGridState<T extends BaseDataGrid> extends State<T> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(T oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Recreate data source when data or columns change
+    print('didUpdateWidget called');
+    print('Old hidden columns count: ${oldWidget.hiddenColumns.length}');
+    print('New hidden columns count: ${widget.hiddenColumns.length}');
+
+    // Find differences
+    final addedHidden = widget.hiddenColumns.difference(
+      oldWidget.hiddenColumns,
+    );
+    final removedHidden = oldWidget.hiddenColumns.difference(
+      widget.hiddenColumns,
+    );
+
+    if (addedHidden.isNotEmpty) {
+      print('Newly hidden columns: $addedHidden');
+    }
+    if (removedHidden.isNotEmpty) {
+      print('Newly visible columns: $removedHidden');
+    }
+
+    // FORCE recreation for debugging - remove this later
+    print('FORCING data source recreation for debugging');
+    _initializeColumnWidths();
+    setState(() {});
+
+    if (oldWidget.data != widget.data ||
+        !_listsEqual(oldWidget.columns, widget.columns) ||
+        !_setsEqual(oldWidget.hiddenColumns, widget.hiddenColumns)) {
+      // Also update column widths for hidden columns
+      _initializeColumnWidths();
+      // Force a rebuild of the widget
+      setState(() {});
+    }
+  }
+
+  bool _listsEqual(List<String> list1, List<String> list2) {
+    if (list1.length != list2.length) return false;
+    for (int i = 0; i < list1.length; i++) {
+      if (list1[i] != list2[i]) return false;
+    }
+    return true;
+  }
+
+  bool _setsEqual(Set<String> set1, Set<String> set2) {
+    return set1.length == set2.length && set1.containsAll(set2);
+  }
+
   void _initializeColumnWidths() {
     _columnWidths = {};
     final visibleColumns = widget.columns.where(
@@ -122,6 +172,9 @@ abstract class BaseDataGridState<T extends BaseDataGrid> extends State<T> {
                   clipBehavior: Clip.none,
                   children: [
                     SfDataGrid(
+                      key: ValueKey(
+                        widget.hiddenColumns.toString(),
+                      ), // Force rebuild when columns change
                       source: dataSource,
                       columnWidthMode: ColumnWidthMode.none,
                       allowSorting: true,

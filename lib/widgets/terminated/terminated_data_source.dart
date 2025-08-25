@@ -63,8 +63,9 @@ class TerminatedDataSource extends DataGridSource {
     final rowIndex = _dataGridRows.indexOf(row);
 
     if (rowIndex < 0 || rowIndex >= _data.length) {
+      final cellCount = _columns.length + (onRemoveTerminated != null ? 1 : 0);
       final emptyCells = List.generate(
-        _columns.length + 1,
+        cellCount,
         (index) => Container(
           alignment: Alignment.center,
           padding: const EdgeInsets.all(8.0),
@@ -76,8 +77,15 @@ class TerminatedDataSource extends DataGridSource {
 
     final record = _data[rowIndex];
 
+    // Only build cells for visible columns (matching the _columns list)
     final cells =
-        row.getCells().map<Widget>((dataGridCell) {
+        _columns.map<Widget>((column) {
+          // Find the corresponding cell in the row
+          final dataGridCell = row.getCells().firstWhere(
+            (cell) => cell.columnName == column,
+            orElse: () => DataGridCell(columnName: column, value: ''),
+          );
+
           Widget cellWidget;
 
           // Check if this is an editable date field (F5, F7, F8)
@@ -178,17 +186,19 @@ class TerminatedDataSource extends DataGridSource {
         }).toList();
 
     // Add delete button
-    cells.add(
-      Container(
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(4.0),
-        child: IconButton(
-          icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-          onPressed: () => onRemoveTerminated?.call(record),
-          tooltip: 'حذف المسرح',
+    if (onRemoveTerminated != null) {
+      cells.add(
+        Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.all(4.0),
+          child: IconButton(
+            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+            onPressed: () => onRemoveTerminated?.call(record),
+            tooltip: 'حذف المسرح',
+          ),
         ),
-      ),
-    );
+      );
+    }
 
     return DataGridRowAdapter(
       color: rowIndex % 2 == 0 ? Colors.white : Colors.green.shade50,

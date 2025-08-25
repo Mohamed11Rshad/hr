@@ -24,6 +24,10 @@ class CategoryMapper {
       'salaryScale': 'Salary_Scale_JNR_PMSS',
       'annualIncrease': 'Annual_Increase_JNR_PMSS',
     },
+    'JNR-PMSS 2': {
+      'salaryScale': 'Salary_Scale_JNR_PMSS_2',
+      'annualIncrease': 'Annual_Increase_JNR_PMSS_2',
+    },
     'PMSS Daily Rates': {
       'salaryScale': 'Salary_Scale_PMSS_Daily_Rates',
       'annualIncrease': 'Annual_Increase_PMSS_Daily',
@@ -38,6 +42,7 @@ class CategoryMapper {
     'Salary Scale SNR-PMSS A': 'Salary_Scale_SNR_PMSS_A',
     'Salary Scale SNR-PMSS B': 'Salary_Scale_SNR_PMSS_B',
     'Salary Scale JNR-PMSS': 'Salary_Scale_JNR_PMSS',
+    'Salary Scale JNR-PMSS 2': 'Salary_Scale_JNR_PMSS_2',
     'Salary Scale PMSS Daily Rates': 'Salary_Scale_PMSS_Daily_Rates',
     'Annual Increase A': 'Annual_Increase_A',
     'Annual Increase B': 'Annual_Increase_B',
@@ -45,6 +50,7 @@ class CategoryMapper {
     'Annual Increase SNR-PMSS A': 'Annual_Increase_SNR_PMSS_A',
     'Annual Increase SNR-PMSS B': 'Annual_Increase_SNR_PMSS_B',
     'Annual Increase JNR-PMSS': 'Annual_Increase_JNR_PMSS',
+    'Annual Increase JNR-PMSS 2': 'Annual_Increase_JNR_PMSS_2',
     'Annual Increase PMSS Daily': 'Annual_Increase_PMSS_Daily',
   };
 
@@ -63,8 +69,19 @@ class CategoryMapper {
       return categoryMapping[cleanCategory]!['salaryScale']!;
     }
 
-    // Look for partial matches for backward compatibility
-    for (final category in categoryMapping.keys) {
+    // Look for partial matches in order of specificity (most specific first)
+    final orderedCategories = [
+      'SNR-PMSS Category A',
+      'SNR-PMSS Category B',
+      'JNR-PMSS 2',
+      'JNR-PMSS',
+      'PMSS Daily Rates',
+      'Category D plus',
+      'Category A',
+      'Category B',
+    ];
+
+    for (final category in orderedCategories) {
       if (cleanCategory.contains(category)) {
         return categoryMapping[category]!['salaryScale']!;
       }
@@ -84,8 +101,19 @@ class CategoryMapper {
       return categoryMapping[cleanCategory]!['annualIncrease']!;
     }
 
-    // Look for partial matches for backward compatibility
-    for (final category in categoryMapping.keys) {
+    // Look for partial matches in order of specificity (most specific first)
+    final orderedCategories = [
+      'SNR-PMSS Category A',
+      'SNR-PMSS Category B',
+      'JNR-PMSS 2',
+      'JNR-PMSS',
+      'PMSS Daily Rates',
+      'Category D plus',
+      'Category A',
+      'Category B',
+    ];
+
+    for (final category in orderedCategories) {
       if (cleanCategory.contains(category)) {
         return categoryMapping[category]!['annualIncrease']!;
       }

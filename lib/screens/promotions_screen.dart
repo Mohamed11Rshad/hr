@@ -44,7 +44,7 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
   late DataGridSource _dataSource;
 
   // GlobalKey for accessing the data grid
-  final GlobalKey<PromotionDataGridState> _promotionDataGridKey =
+  GlobalKey<PromotionDataGridState> _promotionDataGridKey =
       GlobalKey<PromotionDataGridState>();
 
   @override
@@ -382,9 +382,18 @@ class _PromotionsScreenState extends State<PromotionsScreen> {
             columns: _columns,
             columnNames: PromotionConstants.columnNames,
             hiddenColumns: _hiddenColumns,
-            onVisibilityChanged: () => setState(() {}),
+            onVisibilityChanged: _refreshDataSource,
           ),
     );
+  }
+
+  // Add method to refresh data source with current column visibility
+  void _refreshDataSource() {
+    setState(() {
+      // Force rebuild of the promotion data grid with updated hidden columns
+      // Increment a key to force widget recreation
+      _promotionDataGridKey = GlobalKey<PromotionDataGridState>();
+    });
   }
 
   Future<void> _updateAdjustedEligibleDate(

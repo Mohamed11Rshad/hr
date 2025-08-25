@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:hr/widgets/custom_snackbar.dart';
 import 'package:hr/screens/base_data_screen.dart';
 import 'package:hr/services/transfers_data_service.dart';
+import 'package:hr/services/database_service.dart';
+import 'package:hr/services/editable_data_service.dart';
 import 'package:hr/widgets/transfers/transfers_data_grid.dart';
 import 'package:hr/widgets/transfers/add_transfer_dialog.dart';
 import 'package:hr/widgets/column_visibility_dialog.dart';
@@ -35,7 +37,7 @@ class _TransfersScreenState extends BaseDataScreenState<TransfersScreen> {
   List<String> _columns = List.from(TransfersConstants.columns);
 
   // GlobalKey for accessing the data grid
-  final GlobalKey<TransfersDataGridState> _transfersDataGridKey =
+  GlobalKey<TransfersDataGridState> _transfersDataGridKey =
       GlobalKey<TransfersDataGridState>();
 
   @override
@@ -110,6 +112,7 @@ class _TransfersScreenState extends BaseDataScreenState<TransfersScreen> {
   @override
   Widget buildHeader() {
     return buildStandardHeader(
+      showAddButton: false,
       actions: [
         HeaderAction(
           label: 'إضافة',
@@ -136,9 +139,12 @@ class _TransfersScreenState extends BaseDataScreenState<TransfersScreen> {
     _transfersDataGrid = TransfersDataGrid(
       key: _transfersDataGridKey,
       data: _transfersData,
+
       columns: _columns,
       hiddenColumns: _hiddenColumns,
       onRemoveTransfer: _removeTransferRecord,
+      onTransferEmployee:
+          _transferEmployeeDirectly, // New callback for direct transfer
       onUpdateField: _updateTransferField,
       onCopyCellContent: showInfoMessage,
       onColumnDragging: _onColumnDragging,
@@ -233,9 +239,18 @@ class _TransfersScreenState extends BaseDataScreenState<TransfersScreen> {
             columns: TransfersConstants.columns,
             columnNames: TransfersConstants.columnNames,
             hiddenColumns: _hiddenColumns,
-            onVisibilityChanged: () => setState(() {}),
+            onVisibilityChanged: _refreshDataSource,
           ),
     );
+  }
+
+  // Add method to refresh data source with current column visibility
+  void _refreshDataSource() {
+    setState(() {
+      // Force rebuild of the data grid with updated hidden columns
+      // Increment a key to force widget recreation
+      _transfersDataGridKey = GlobalKey<TransfersDataGridState>();
+    });
   }
 
   // Transfer-specific methods
@@ -322,9 +337,42 @@ class _TransfersScreenState extends BaseDataScreenState<TransfersScreen> {
     }
   }
 
+  // New method for direct transfer without confirmation dialog
+  Future<void> _transferEmployeeDirectly(Map<String, dynamic> record) async {
+    final badgeNo = record['Badge_NO']?.toString() ?? '';
+
+    print('Starting transfer for employee $badgeNo');
+
+    try {
+      // Create the editable data service for direct transfer
+      final db = await DatabaseService.openDatabase();
+      final editableDataService = EditableDataService(db);
+      await editableDataService.initializeEditableDataTable();
+
+      // Transfer the employee directly to transferred table
+      await editableDataService.transferEmployeeToTransferred(
+        badgeNo: badgeNo,
+        transferData: record,
+      );
+
+      print('Employee $badgeNo transferred to transferred table successfully');
+
+      // Remove from current transfers table by Badge_NO
+      await _dataService.removeTransferByBadgeNo(badgeNo);
+      print('Employee $badgeNo removed from transfers database');
+
+      _removeTransferFromListByBadgeNo(badgeNo);
+      print('Employee $badgeNo removed from transfers list');
+
+      showSuccessMessage('تم نقل الموظف إلى شاشة المنقولين بنجاح');
+    } catch (e) {
+      print('Error transferring employee $badgeNo: $e');
+      showErrorMessage('خطأ في نقل الموظف: ${e.toString()}');
+    }
+  }
+
   Future<void> _removeTransferRecord(Map<String, dynamic> record) async {
     final badgeNo = record['Badge_NO']?.toString() ?? '';
-    final sNo = record['S_NO']?.toString() ?? '';
 
     final confirmed = await _showConfirmationDialog(
       'تأكيد الحذف',
@@ -334,8 +382,21 @@ class _TransfersScreenState extends BaseDataScreenState<TransfersScreen> {
     if (confirmed != true) return;
 
     try {
-      await _dataService.removeTransfer(sNo);
-      _removeTransferFromList(sNo);
+      await _dataService.removeTransferByBadgeNo(badgeNo);
+
+      // Also clear any editable data for this employee
+      try {
+        final db = await DatabaseService.openDatabase();
+        final editableDataService = EditableDataService(db);
+        await editableDataService.clearEditableDataForEmployee(
+          badgeNo,
+          'transfers',
+        );
+      } catch (e) {
+        print('Error clearing editable data during deletion: $e');
+      }
+
+      _removeTransferFromListByBadgeNo(badgeNo);
       showSuccessMessage('تم الحذف بنجاح');
     } catch (e) {
       showErrorMessage('خطأ في الحذف: ${e.toString()}');
@@ -343,12 +404,38 @@ class _TransfersScreenState extends BaseDataScreenState<TransfersScreen> {
   }
 
   void _removeTransferFromList(String sNo) {
+    print('Removing transfer with S_NO: $sNo from list');
+    print('List size before removal: ${_transfersData.length}');
+
     setState(() {
       _transfersData.removeWhere((item) => item['S_NO']?.toString() == sNo);
     });
 
+    print('List size after removal: ${_transfersData.length}');
+
     // Force refresh the data grid by recreating it with new data
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      print('Refreshing data grid after removal');
+      final state = _transfersDataGridKey.currentState;
+      state?.refreshDataSource();
+    });
+  }
+
+  void _removeTransferFromListByBadgeNo(String badgeNo) {
+    print('Removing transfer with Badge_NO: $badgeNo from list');
+    print('List size before removal: ${_transfersData.length}');
+
+    setState(() {
+      _transfersData.removeWhere(
+        (item) => item['Badge_NO']?.toString() == badgeNo,
+      );
+    });
+
+    print('List size after removal: ${_transfersData.length}');
+
+    // Force refresh the data grid by recreating it with new data
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      print('Refreshing data grid after removal');
       final state = _transfersDataGridKey.currentState;
       state?.refreshDataSource();
     });
@@ -362,9 +449,21 @@ class _TransfersScreenState extends BaseDataScreenState<TransfersScreen> {
     try {
       await _dataService.updateTransferField(sNo, fieldName, value);
 
-      // If this is a "Done" operation, remove the record from the list
+      // If this is a "Done" operation, find the record and remove by Badge_NO
       if (fieldName == 'DONE_YES_NO' && value.toLowerCase() == 'done') {
-        _removeTransferFromList(sNo);
+        // Find the record with this S_NO to get the Badge_NO
+        final record = _transfersData.firstWhere(
+          (item) => item['S_NO']?.toString() == sNo,
+          orElse: () => <String, dynamic>{},
+        );
+
+        if (record.isNotEmpty) {
+          final badgeNo = record['Badge_NO']?.toString() ?? '';
+          _removeTransferFromListByBadgeNo(badgeNo);
+        } else {
+          // Fallback to S_NO if Badge_NO not found
+          _removeTransferFromList(sNo);
+        }
         showSuccessMessage('تم نقل الموظف بنجاح');
       } else {
         _updateTransferInList(sNo, fieldName, value);

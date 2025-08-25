@@ -12,11 +12,11 @@ class AppraisalDataService {
 
   Future<void> _initializeTables() async {
     try {
-      // Create grade_changes table with new structure
+      // Create appraisal table for storing grade and new basic system changes
       await db.execute('''
-        CREATE TABLE IF NOT EXISTS grade_changes (
+        CREATE TABLE IF NOT EXISTS appraisal (
           badge_no TEXT PRIMARY KEY,
-          new_grade TEXT,
+          grade TEXT,
           new_basic_system TEXT,
           changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -30,7 +30,7 @@ class AppraisalDataService {
         )
       ''');
 
-      debugPrint('Successfully initialized tables with new structure');
+      debugPrint('Successfully initialized appraisal table');
     } catch (e) {
       debugPrint('Error initializing tables: $e');
     }
@@ -215,12 +215,12 @@ class AppraisalDataService {
       try {
         final query = '''
           SELECT b.*, 
-                 COALESCE(g.new_grade, b.Grade) as Grade,
-                 COALESCE(g.new_basic_system, '') as New_Basic_System,
-                 COALESCE(a.Adjustments, '0') as original_adjustments 
+                 COALESCE(a_table.grade, b.Grade) as Grade,
+                 COALESCE(a_table.new_basic_system, '') as New_Basic_System,
+                 COALESCE(adj.Adjustments, '0') as original_adjustments 
           FROM "$baseTableName" b
-          LEFT JOIN grade_changes g ON b.Badge_NO = g.badge_no
-          LEFT JOIN Adjustments a ON b.Badge_NO = a.Badge_NO
+          LEFT JOIN appraisal a_table ON b.Badge_NO = a_table.badge_no
+          LEFT JOIN Adjustments adj ON b.Badge_NO = adj.Badge_NO
           WHERE b.upload_date = ?
           ORDER BY CAST(REPLACE(b.Badge_NO, ' ', '') AS INTEGER)
           ''';
@@ -231,12 +231,12 @@ class AppraisalDataService {
         if (enrichedData.isNotEmpty) {
           latestData = enrichedData;
           debugPrint(
-            'Successfully enriched data with grade changes and adjustments',
+            'Successfully enriched data with appraisal table and adjustments',
           );
         }
       } catch (e, stackTrace) {
         debugPrint(
-          'Warning: Could not enrich data with grade changes and adjustments:',
+          'Warning: Could not enrich data with appraisal table and adjustments:',
         );
         debugPrint('Error: $e');
         debugPrint('Stack trace: $stackTrace');
@@ -256,21 +256,19 @@ class AppraisalDataService {
             'Available tables: ${tables.map((t) => t['name']).join(', ')}',
           );
 
-          if (tables.any((t) => t['name'] == 'grade_changes')) {
-            final structure = await db.rawQuery(
-              'PRAGMA table_info(grade_changes)',
-            );
-            debugPrint('grade_changes structure: $structure');
+          if (tables.any((t) => t['name'] == 'appraisal')) {
+            final structure = await db.rawQuery('PRAGMA table_info(appraisal)');
+            debugPrint('appraisal table structure: $structure');
 
             // Try the query again after fixing the structure
             final retryQuery = '''
               SELECT b.*, 
-                     COALESCE(g.new_grade, b.Grade) as Grade,
-                     COALESCE(g.new_basic_system, '') as New_Basic_System,
-                     COALESCE(a.Adjustments, '0') as original_adjustments 
+                     COALESCE(a_table.grade, b.Grade) as Grade,
+                     COALESCE(a_table.new_basic_system, '') as New_Basic_System,
+                     COALESCE(adj.Adjustments, '0') as original_adjustments 
               FROM "$baseTableName" b
-              LEFT JOIN grade_changes g ON b.Badge_NO = g.badge_no
-              LEFT JOIN Adjustments a ON b.Badge_NO = a.Badge_NO
+              LEFT JOIN appraisal a_table ON b.Badge_NO = a_table.badge_no
+              LEFT JOIN Adjustments adj ON b.Badge_NO = adj.Badge_NO
               WHERE b.upload_date = ?
               ORDER BY CAST(REPLACE(b.Badge_NO, ' ', '') AS INTEGER)
             ''';
@@ -405,25 +403,15 @@ class AppraisalDataService {
         grade = grade.substring(1); // Remove leading zero if present
       }
 
-      debugPrint('++++++++++++++++++Calculating midpoint for grade: $grade');
-
       // Determine salary scale table using CategoryMapper
-      final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
+      final payScaleArea = baseData['Pay_scale_area_text']?.toString() ?? '';
       final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
-
-      debugPrint(
-        '++++++++++++++++++ Using salary scale table: $salaryScaleTable for grade: $grade',
-      );
 
       // Get salary scale data for midpoint calculation using current grade
       final salaryScaleData = await db.query(
         salaryScaleTable,
         where: 'Grade = ?',
         whereArgs: [grade],
-      );
-
-      debugPrint(
-        '++++++++++++++++++ Salary scale data for grade $grade: $salaryScaleData',
       );
 
       if (salaryScaleData.isEmpty) return 0.0;
@@ -453,7 +441,7 @@ class AppraisalDataService {
       }
 
       // Determine salary scale table using CategoryMapper
-      final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
+      final payScaleArea = baseData['Pay_scale_area_text']?.toString() ?? '';
       final salaryScaleTable = CategoryMapper.getSalaryScaleTable(payScaleArea);
 
       // Get salary scale data for maximum calculation using current grade
@@ -490,7 +478,7 @@ class AppraisalDataService {
       }
 
       // Determine salary scale and annual increase tables using CategoryMapper
-      final payScaleArea = baseData['pay_scale_area_text']?.toString() ?? '';
+      final payScaleArea = baseData['Pay_scale_area_text']?.toString() ?? '';
       final annualIncreaseTable = CategoryMapper.getAnnualIncreaseTable(
         payScaleArea,
       );
@@ -596,7 +584,8 @@ class AppraisalDataService {
       }
     }
 
-    return actualIncrease;
+    // Ensure actual increase is never negative - zero is the minimum value
+    return actualIncrease < 0 ? 0.0 : actualIncrease;
   }
 
   DateTime _parseJoinDate(String dateStr) {
@@ -660,11 +649,11 @@ class AppraisalDataService {
         'Saving grade change: Badge=$badgeNo, Grade=$newGrade, NewBasic=$newBasicSystem',
       );
 
-      // Ensure the table exists with correct structure
+      // Ensure the appraisal table exists with correct structure
       await db.execute('''
-        CREATE TABLE IF NOT EXISTS grade_changes (
+        CREATE TABLE IF NOT EXISTS appraisal (
           badge_no TEXT PRIMARY KEY,
-          new_grade TEXT,
+          grade TEXT,
           new_basic_system TEXT,
           changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -674,25 +663,25 @@ class AppraisalDataService {
       final cleanedNewBasic = newBasicSystem.trim();
       final cleanedGrade = newGrade.trim();
 
-      // Insert or update grade change
-      final result = await db.insert('grade_changes', {
+      // Insert or update appraisal record
+      final result = await db.insert('appraisal', {
         'badge_no': badgeNo,
-        'new_grade': cleanedGrade,
+        'grade': cleanedGrade,
         'new_basic_system': cleanedNewBasic,
         'changed_at': DateTime.now().toIso8601String(),
       }, conflictAlgorithm: ConflictAlgorithm.replace);
 
-      debugPrint('Successfully saved grade change with result: $result');
+      debugPrint('Successfully saved appraisal record with result: $result');
 
       // Verify the save
       final saved = await db.query(
-        'grade_changes',
+        'appraisal',
         where: 'badge_no = ?',
         whereArgs: [badgeNo],
       );
       debugPrint('Verified saved data: $saved');
     } catch (e) {
-      debugPrint('Error saving grade change: $e');
+      debugPrint('Error saving appraisal record: $e');
       rethrow;
     }
   }
@@ -700,7 +689,7 @@ class AppraisalDataService {
   Future<Map<String, dynamic>?> getGradeChange(String badgeNo) async {
     try {
       final results = await db.query(
-        'grade_changes',
+        'appraisal',
         where: 'badge_no = ?',
         whereArgs: [badgeNo],
       );
@@ -710,16 +699,16 @@ class AppraisalDataService {
       }
       return null;
     } catch (e) {
-      debugPrint('Error getting grade change: $e');
+      debugPrint('Error getting appraisal record: $e');
       rethrow;
     }
   }
 
   Future<List<Map<String, dynamic>>> getAllGradeChanges() async {
     try {
-      return await db.query('grade_changes', orderBy: 'changed_at DESC');
+      return await db.query('appraisal', orderBy: 'changed_at DESC');
     } catch (e) {
-      debugPrint('Error getting all grade changes: $e');
+      debugPrint('Error getting all appraisal records: $e');
       rethrow;
     }
   }

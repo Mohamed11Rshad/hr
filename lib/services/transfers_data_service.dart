@@ -94,12 +94,11 @@ class TransfersDataService {
       final tableInfo = await db.rawQuery(
         'PRAGMA table_info("$baseTableName")',
       );
-      final badgeColumn = tableInfo
-          .map((col) => col['name'].toString())
-          .firstWhere(
-            (name) => name.toLowerCase().contains('badge'),
-            orElse: () => 'Badge_NO',
-          );
+      final badgeColumn =
+          tableInfo.map((col) => col['name'].toString()).firstWhere(
+                (name) => name.toLowerCase().contains('badge'),
+                orElse: () => 'Badge_NO',
+              );
 
       final result = await db.query(
         baseTableName,
@@ -148,6 +147,19 @@ class TransfersDataService {
       await db.delete('transfers', where: 'S_NO = ?', whereArgs: [sNo]);
     } catch (e) {
       print('Error removing transfer: $e');
+      rethrow;
+    }
+  }
+
+  // Add method to remove transfer by Badge_NO
+  Future<void> removeTransferByBadgeNo(String badgeNo) async {
+    try {
+      print('Removing transfer for Badge_NO: $badgeNo');
+      int deletedRows = await db
+          .delete('transfers', where: 'Badge_NO = ?', whereArgs: [badgeNo]);
+      print('Deleted $deletedRows rows for Badge_NO: $badgeNo');
+    } catch (e) {
+      print('Error removing transfer by Badge_NO: $e');
       rethrow;
     }
   }
@@ -281,12 +293,11 @@ class TransfersDataService {
         final tableInfo = await db.rawQuery(
           'PRAGMA table_info("$baseTableName")',
         );
-        final badgeColumn = tableInfo
-            .map((col) => col['name'].toString())
-            .firstWhere(
-              (name) => name.toLowerCase().contains('badge'),
-              orElse: () => 'Badge_NO',
-            );
+        final badgeColumn =
+            tableInfo.map((col) => col['name'].toString()).firstWhere(
+                  (name) => name.toLowerCase().contains('badge'),
+                  orElse: () => 'Badge_NO',
+                );
 
         final badgeNumber = occupiedRecord[badgeColumn]?.toString() ?? '';
 
@@ -309,12 +320,11 @@ class TransfersDataService {
       final tableInfo = await db.rawQuery(
         'PRAGMA table_info("$baseTableName")',
       );
-      final badgeColumn = tableInfo
-          .map((col) => col['name'].toString())
-          .firstWhere(
-            (name) => name.toLowerCase().contains('badge'),
-            orElse: () => 'Badge_NO',
-          );
+      final badgeColumn =
+          tableInfo.map((col) => col['name'].toString()).firstWhere(
+                (name) => name.toLowerCase().contains('badge'),
+                orElse: () => 'Badge_NO',
+              );
 
       final result = await db.query(
         baseTableName,
@@ -470,8 +480,9 @@ class TransfersDataService {
   }) async {
     try {
       final data = await db.query(
-        'transferred_employees',
-        orderBy: 'transferred_date DESC',
+        'transferred', // Changed from 'transferred_employees' to 'transferred'
+        orderBy:
+            'transfer_date DESC', // Changed from 'transferred_date' to 'transfer_date'
         limit: limit,
         offset: offset,
       );
@@ -488,11 +499,25 @@ class TransfersDataService {
     String transferredDate,
   ) async {
     try {
-      await db.delete(
-        'transferred_employees',
-        where: 'Badge_NO = ? AND transferred_date = ?',
+      // Try to delete by Badge_NO and transfer_date first
+      int count = await db.delete(
+        'transferred',
+        where: 'Badge_NO = ? AND transfer_date = ?',
         whereArgs: [badgeNo, transferredDate],
       );
+
+      // If no rows were deleted, try by Badge_NO only (in case transfer_date doesn't match exactly)
+      if (count == 0) {
+        print(
+            'No rows deleted with Badge_NO and transfer_date, trying Badge_NO only');
+        count = await db.delete(
+          'transferred',
+          where: 'Badge_NO = ?',
+          whereArgs: [badgeNo],
+        );
+      }
+
+      print('Deleted $count rows for Badge_NO: $badgeNo');
     } catch (e) {
       print('Error removing transferred employee: $e');
       rethrow;
@@ -541,18 +566,16 @@ class TransfersDataService {
 
       // Validate all employees exist
       final validEmployees = await _validateMultipleEmployees(badgeNumbers);
-      final invalidEmployees =
-          badgeNumbers
-              .where((badge) => !validEmployees.contains(badge))
-              .toList();
+      final invalidEmployees = badgeNumbers
+          .where((badge) => !validEmployees.contains(badge))
+          .toList();
 
       // Validate all positions exist
       final positionCodes = transfers.map((t) => t['positionCode']!).toList();
       final validPositions = await _validateMultiplePositions(positionCodes);
-      final invalidPositions =
-          positionCodes
-              .where((position) => !validPositions.contains(position))
-              .toList();
+      final invalidPositions = positionCodes
+          .where((position) => !validPositions.contains(position))
+          .toList();
 
       results['invalidEmployees'] = invalidEmployees;
       results['invalidPositions'] = invalidPositions;
@@ -645,12 +668,11 @@ class TransfersDataService {
       final tableInfo = await db.rawQuery(
         'PRAGMA table_info("$baseTableName")',
       );
-      final badgeColumn = tableInfo
-          .map((col) => col['name'].toString())
-          .firstWhere(
-            (name) => name.toLowerCase().contains('badge'),
-            orElse: () => 'Badge_NO',
-          );
+      final badgeColumn =
+          tableInfo.map((col) => col['name'].toString()).firstWhere(
+                (name) => name.toLowerCase().contains('badge'),
+                orElse: () => 'Badge_NO',
+              );
 
       final placeholders = badgeNumbers.map((_) => '?').join(',');
       final result = await db.rawQuery(
@@ -694,11 +716,10 @@ class TransfersDataService {
         [...positionCodes, ...positionCodes, ...positionCodes],
       );
 
-      final validPositions =
-          result
-              .map((row) => row['Position_Abbreviation']?.toString() ?? '')
-              .where((position) => position.isNotEmpty)
-              .toSet();
+      final validPositions = result
+          .map((row) => row['Position_Abbreviation']?.toString() ?? '')
+          .where((position) => position.isNotEmpty)
+          .toSet();
 
       // Return positions that exist in the input list
       return positionCodes

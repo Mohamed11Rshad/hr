@@ -1032,7 +1032,13 @@ class _LatestDataSource extends DataGridSource {
     return DataGridRowAdapter(
       color: rowIndex % 2 == 0 ? Colors.white : Colors.blue.shade50,
       cells:
-          row.getCells().map<Widget>((dataGridCell) {
+          _columns.map<Widget>((column) {
+            // Find the corresponding cell in the row
+            final dataGridCell = row.getCells().firstWhere(
+              (cell) => cell.columnName == column,
+              orElse: () => DataGridCell(columnName: column, value: ''),
+            );
+
             return GestureDetector(
               onSecondaryTap: () {
                 // Right click: add this cell value to clipboard collection

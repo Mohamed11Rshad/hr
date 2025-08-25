@@ -107,4 +107,25 @@ class DatabaseService {
 
     return result;
   }
+
+  /// Check if a table exists and has data
+  static Future<bool> tableHasData(Database db, String tableName) async {
+    try {
+      // First check if table exists
+      final tables = await getAvailableTables(db);
+      if (!tables.contains(tableName)) {
+        return false;
+      }
+
+      // Check if table has any data
+      final result = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM "$tableName"',
+      );
+      final count = result.first['count'] as int;
+      return count > 0;
+    } catch (e) {
+      // If there's an error (table doesn't exist, etc.), return false
+      return false;
+    }
+  }
 }

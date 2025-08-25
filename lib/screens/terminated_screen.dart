@@ -217,11 +217,16 @@ class _TerminatedScreenState extends BaseDataScreenState<TerminatedScreen> {
             columns: _columns,
             columnNames: TerminatedConstants.columnNames,
             hiddenColumns: _hiddenColumns,
-            onVisibilityChanged: () {
-              setState(() {});
-            },
+            onVisibilityChanged: _refreshDataSource,
           ),
     );
+  }
+
+  // Add method to refresh data source with current column visibility
+  void _refreshDataSource() {
+    setState(() {
+      // Force rebuild of the data grid with updated hidden columns
+    });
   }
 
   @override

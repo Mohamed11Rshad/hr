@@ -48,6 +48,8 @@ class TerminationDataGridState extends State<TerminationDataGrid> {
   Timer? _scrollTimer;
   TerminationDataSource? _dataSource;
   int _filteredRecordCount = 0;
+  List<String> _visibleColumns =
+      []; // Store visible columns to ensure consistency
 
   @override
   void initState() {
@@ -63,11 +65,15 @@ class TerminationDataGridState extends State<TerminationDataGrid> {
   }
 
   void _createDataSource() {
+    // Calculate visible columns once and store them for consistency
+    _visibleColumns =
+        widget.columns
+            .where((col) => !widget.hiddenColumns.contains(col))
+            .toList();
+
     _dataSource = TerminationDataSource(
       widget.data,
-      widget.columns
-          .where((col) => !widget.hiddenColumns.contains(col))
-          .toList(),
+      _visibleColumns, // Use the stored visible columns
       onRemoveTermination: widget.onRemoveTermination,
       onCopyCellContent: widget.onCopyCellContent,
       onUpdateAppraisalText: widget.onUpdateAppraisalText,
@@ -93,24 +99,39 @@ class TerminationDataGridState extends State<TerminationDataGrid> {
   void didUpdateWidget(TerminationDataGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Recreate data source when data or columns change
+    print('didUpdateWidget called');
+    print('Old hidden columns count: ${oldWidget.hiddenColumns.length}');
+    print('New hidden columns count: ${widget.hiddenColumns.length}');
+
+    // Find differences
+    final addedHidden = widget.hiddenColumns.difference(
+      oldWidget.hiddenColumns,
+    );
+    final removedHidden = oldWidget.hiddenColumns.difference(
+      widget.hiddenColumns,
+    );
+
+    if (addedHidden.isNotEmpty) {
+      print('Newly hidden columns: $addedHidden');
+    }
+    if (removedHidden.isNotEmpty) {
+      print('Newly visible columns: $removedHidden');
+    }
+
+    // FORCE recreation for debugging - remove this later
+    print('FORCING data source recreation for debugging');
+    _createDataSource();
+    _initializeColumnWidths();
+    setState(() {});
+
     if (oldWidget.data != widget.data ||
         !_listsEqual(oldWidget.columns, widget.columns) ||
         !_setsEqual(oldWidget.hiddenColumns, widget.hiddenColumns)) {
       _createDataSource();
+      // Also update column widths for hidden columns
       _initializeColumnWidths();
-      // Update filtered count when data changes
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          setState(() {
-            _filteredRecordCount =
-                _dataSource?.effectiveRows.length ?? widget.data.length;
-          });
-          // Notify parent screen
-          if (widget.onFilterChanged != null) {
-            widget.onFilterChanged!(_filteredRecordCount);
-          }
-        }
-      });
+      // Force a rebuild of the widget
+      setState(() {});
     }
   }
 
@@ -179,12 +200,9 @@ class TerminationDataGridState extends State<TerminationDataGrid> {
   }
 
   List<GridColumn> _buildGridColumns() {
-    final visibleColumns = widget.columns.where(
-      (col) => !widget.hiddenColumns.contains(col),
-    );
-
+    // Use the same visible columns that were used to create the data source
     final columns =
-        visibleColumns.map((column) {
+        _visibleColumns.map((column) {
           return GridColumn(
             columnName: column,
             width: _columnWidths[column] ?? _getColumnWidth(column),
@@ -271,6 +289,9 @@ class TerminationDataGridState extends State<TerminationDataGrid> {
             _buildRecordCountBar(),
             Expanded(
               child: SfDataGrid(
+                key: ValueKey(
+                  widget.hiddenColumns.toString(),
+                ), // Force rebuild when columns change
                 source: _dataSource!,
                 columnWidthMode: ColumnWidthMode.none,
                 allowSorting: true,

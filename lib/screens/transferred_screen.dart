@@ -16,7 +16,7 @@ class TransferredScreen extends StatefulWidget {
   final String? tableName;
 
   const TransferredScreen({Key? key, required this.db, this.tableName})
-    : super(key: key);
+      : super(key: key);
 
   @override
   State<TransferredScreen> createState() => _TransferredScreenState();
@@ -43,33 +43,61 @@ class _TransferredScreenState extends State<TransferredScreen> {
   final Set<String> _hiddenColumns = <String>{};
 
   List<String> _columns = [
+    'S_NO',
     'Badge_NO',
     'Employee_Name',
-    'Grade',
-    'Old_Position_Code',
-    'Old_Position',
-    'Current_Position_Code',
-    'Current_Position',
-    'Transfer_Type',
+    'Position_Code',
     'POD',
     'ERD',
+    'DONE_YES_NO',
     'Available_in_ERD',
-    'transferred_date',
+    'Bus_Line',
+    'Depart_Text',
+    'Grade',
+    'Grade_Range',
+    'Position_Text',
+    'Emp_Position_Code',
+    'Dept',
+    'Position_Abbreviation',
+    'Position_Description',
+    'OrgUnit_Description',
+    'Grade_Range6',
+    'New_Bus_Line',
+    'Grade_GAP',
+    'Transfer_Type',
+    'Occupancy',
+    'Badge_Number',
+    'transfer_date',
+    'created_date',
   ];
 
   static const Map<String, String> _columnNames = {
+    'S_NO': 'S No',
     'Badge_NO': 'Badge No',
     'Employee_Name': 'Employee Name',
-    'Grade': 'Grade',
-    'Old_Position_Code': 'Old Position Code',
-    'Old_Position': 'Old Position',
-    'Current_Position_Code': 'Current Position Code',
-    'Current_Position': 'Current Position',
-    'Transfer_Type': 'Transfer Type',
+    'Position_Code': 'Position Code',
     'POD': 'POD',
     'ERD': 'ERD',
+    'DONE_YES_NO': 'Status',
     'Available_in_ERD': 'Available in ERD',
-    'transferred_date': 'Transfer Date',
+    'Bus_Line': 'Bus Line',
+    'Depart_Text': 'Department',
+    'Grade': 'Grade',
+    'Grade_Range': 'Grade Range',
+    'Position_Text': 'Position',
+    'Emp_Position_Code': 'Emp Position Code',
+    'Dept': 'Dept',
+    'Position_Abbreviation': 'Position Abbr',
+    'Position_Description': 'Position Desc',
+    'OrgUnit_Description': 'Org Unit',
+    'Grade_Range6': 'Grade Range 6',
+    'New_Bus_Line': 'New Bus Line',
+    'Grade_GAP': 'Grade GAP',
+    'Transfer_Type': 'Transfer Type',
+    'Occupancy': 'Occupancy',
+    'Badge_Number': 'Badge Number',
+    'transfer_date': 'Transfer Date',
+    'created_date': 'Created Date',
   };
 
   // Add column widths map
@@ -226,7 +254,8 @@ class _TransferredScreenState extends State<TransferredScreen> {
     Map<String, dynamic> record,
   ) async {
     final badgeNo = record['Badge_NO']?.toString() ?? '';
-    final transferredDate = record['transferred_date']?.toString() ?? '';
+    final transferredDate = record['transfer_date']?.toString() ??
+        ''; // Changed from 'transferred_date' to 'transfer_date'
 
     final confirmed = await _showConfirmationDialog(
       'تأكيد الحذف',
@@ -236,19 +265,39 @@ class _TransferredScreenState extends State<TransferredScreen> {
     if (confirmed != true) return;
 
     try {
+      print(
+          'Attempting to remove transferred employee: $badgeNo, transfer_date: $transferredDate');
       await _dataService.removeTransferredEmployee(badgeNo, transferredDate);
+      print('Successfully removed from database');
 
       setState(() {
+        print(
+            'Removing from local list. List size before: ${_transferredData.length}');
+
+        // First try to remove by Badge_NO and transfer_date
+        int initialLength = _transferredData.length;
         _transferredData.removeWhere(
           (item) =>
               item['Badge_NO']?.toString() == badgeNo &&
-              item['transferred_date']?.toString() == transferredDate,
+              item['transfer_date']?.toString() == transferredDate,
         );
+
+        // If nothing was removed, try by Badge_NO only
+        if (_transferredData.length == initialLength) {
+          print(
+              'No item removed by Badge_NO and transfer_date, trying Badge_NO only');
+          _transferredData.removeWhere(
+            (item) => item['Badge_NO']?.toString() == badgeNo,
+          );
+        }
+
+        print('List size after removal: ${_transferredData.length}');
         _refreshDataSource();
       });
 
       CustomSnackbar.showSuccess(context, 'تم حذف الموظف من قائمة المنقولين');
     } catch (e) {
+      print('Error removing transferred employee: $e');
       CustomSnackbar.showError(context, 'خطأ في حذف الموظف: ${e.toString()}');
     }
   }
@@ -256,21 +305,20 @@ class _TransferredScreenState extends State<TransferredScreen> {
   Future<bool?> _showConfirmationDialog(String title, String content) {
     return showDialog<bool>(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text(title),
-            content: Text(content),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('إلغاء'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('حذف'),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء'),
           ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -289,10 +337,9 @@ class _TransferredScreenState extends State<TransferredScreen> {
       data: dataToExport,
       columns: _columns,
       columnNames: _columnNames,
-      tableName:
-          dataToExport.length < _transferredData.length
-              ? 'الموظفين_المنقولين_مفلتر'
-              : 'الموظفين_المنقولين',
+      tableName: dataToExport.length < _transferredData.length
+          ? 'الموظفين_المنقولين_مفلتر'
+          : 'الموظفين_المنقولين',
     );
 
     setState(() => _isLoading = false);
@@ -366,17 +413,16 @@ class _TransferredScreenState extends State<TransferredScreen> {
   void _showColumnVisibilityDialog() {
     showDialog(
       context: context,
-      builder:
-          (context) => ColumnVisibilityDialog(
-            columns: _columns,
-            columnNames: _columnNames,
-            hiddenColumns: _hiddenColumns,
-            onVisibilityChanged: () {
-              setState(() {
-                _refreshDataSource();
-              });
-            },
-          ),
+      builder: (context) => ColumnVisibilityDialog(
+        columns: _columns,
+        columnNames: _columnNames,
+        hiddenColumns: _hiddenColumns,
+        onVisibilityChanged: () {
+          setState(() {
+            _refreshDataSource();
+          });
+        },
+      ),
     );
   }
 
@@ -509,10 +555,9 @@ class _TransferredScreenState extends State<TransferredScreen> {
                     onColumnDragging: (DataGridColumnDragDetails details) {
                       if (details.action == DataGridColumnDragAction.dropped &&
                           details.to != null) {
-                        final visibleColumns =
-                            _columns
-                                .where((col) => !_hiddenColumns.contains(col))
-                                .toList();
+                        final visibleColumns = _columns
+                            .where((col) => !_hiddenColumns.contains(col))
+                            .toList();
 
                         // Don't allow dragging the actions column
                         if (details.from >= visibleColumns.length) return true;
@@ -547,7 +592,6 @@ class _TransferredScreenState extends State<TransferredScreen> {
                         width: _columnWidths[column.columnName] ?? 180,
                         height: 50,
                         color: const Color.fromARGB(255, 23, 82, 25),
-
                         child: Center(
                           child: Text(
                             _columnNames[column.columnName] ??
@@ -577,11 +621,10 @@ class _TransferredScreenState extends State<TransferredScreen> {
                 child: Column(
                   children: [
                     InkWell(
-                      onTapDown:
-                          (_) => _startContinuousScroll(
-                            _verticalScrollController,
-                            -50,
-                          ),
+                      onTapDown: (_) => _startContinuousScroll(
+                        _verticalScrollController,
+                        -50,
+                      ),
                       onTapUp: (_) => _stopContinuousScroll(),
                       onTapCancel: () => _stopContinuousScroll(),
                       child: Container(
@@ -600,11 +643,10 @@ class _TransferredScreenState extends State<TransferredScreen> {
                     ),
                     const Spacer(),
                     InkWell(
-                      onTapDown:
-                          (_) => _startContinuousScroll(
-                            _verticalScrollController,
-                            50,
-                          ),
+                      onTapDown: (_) => _startContinuousScroll(
+                        _verticalScrollController,
+                        50,
+                      ),
                       onTapUp: (_) => _stopContinuousScroll(),
                       onTapCancel: () => _stopContinuousScroll(),
                       child: Container(
@@ -632,11 +674,10 @@ class _TransferredScreenState extends State<TransferredScreen> {
                 child: Row(
                   children: [
                     InkWell(
-                      onTapDown:
-                          (_) => _startContinuousScroll(
-                            _horizontalController,
-                            -50,
-                          ),
+                      onTapDown: (_) => _startContinuousScroll(
+                        _horizontalController,
+                        -50,
+                      ),
                       onTapUp: (_) => _stopContinuousScroll(),
                       onTapCancel: () => _stopContinuousScroll(),
                       child: Container(
@@ -654,11 +695,9 @@ class _TransferredScreenState extends State<TransferredScreen> {
                       ),
                     ),
                     const Spacer(),
-
                     InkWell(
-                      onTapDown:
-                          (_) =>
-                              _startContinuousScroll(_horizontalController, 50),
+                      onTapDown: (_) =>
+                          _startContinuousScroll(_horizontalController, 50),
                       onTapUp: (_) => _stopContinuousScroll(),
                       onTapCancel: () => _stopContinuousScroll(),
                       child: Container(
@@ -752,26 +791,26 @@ class _TransferredScreenState extends State<TransferredScreen> {
   List<GridColumn> _buildGridColumns() {
     final columns =
         _columns.where((col) => !_hiddenColumns.contains(col)).map((column) {
-          return GridColumn(
-            columnName: column,
-            width: _columnWidths[column] ?? _getColumnWidth(column),
-            minimumWidth: 20,
-            label: Container(
-              padding: const EdgeInsets.all(8.0),
-              alignment: Alignment.center,
-              child: Text(
-                _columnNames[column] ?? column,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  fontSize: 14,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+      return GridColumn(
+        columnName: column,
+        width: _columnWidths[column] ?? _getColumnWidth(column),
+        minimumWidth: 20,
+        label: Container(
+          padding: const EdgeInsets.all(8.0),
+          alignment: Alignment.center,
+          child: Text(
+            _columnNames[column] ?? column,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              fontSize: 14,
             ),
-          );
-        }).toList();
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      );
+    }).toList();
 
     columns.add(
       GridColumn(
@@ -874,28 +913,26 @@ class _TransferredDataSource extends DataGridSource {
   }
 
   void _buildDataGridRows() {
-    _dataGridRows =
-        _data.map<DataGridRow>((dataRow) {
-          return DataGridRow(
-            cells:
-                _columns.map<DataGridCell>((column) {
-                  String value = dataRow[column]?.toString() ?? '';
+    _dataGridRows = _data.map<DataGridRow>((dataRow) {
+      return DataGridRow(
+        cells: _columns.map<DataGridCell>((column) {
+          String value = dataRow[column]?.toString() ?? '';
 
-                  // Format transferred_date for display
-                  if (column == 'transferred_date' && value.isNotEmpty) {
-                    try {
-                      final date = DateTime.parse(value);
-                      value =
-                          '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
-                    } catch (e) {
-                      // Keep original value if parsing fails
-                    }
-                  }
+          // Format transferred_date for display
+          if (column == 'transferred_date' && value.isNotEmpty) {
+            try {
+              final date = DateTime.parse(value);
+              value =
+                  '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
+            } catch (e) {
+              // Keep original value if parsing fails
+            }
+          }
 
-                  return DataGridCell<String>(columnName: column, value: value);
-                }).toList(),
-          );
-        }).toList();
+          return DataGridCell<String>(columnName: column, value: value);
+        }).toList(),
+      );
+    }).toList();
   }
 
   @override
@@ -906,37 +943,43 @@ class _TransferredDataSource extends DataGridSource {
     final rowIndex = _dataGridRows.indexOf(row);
     final record = _data[rowIndex];
 
-    final cells =
-        row.getCells().map<Widget>((dataGridCell) {
-          return GestureDetector(
-            onSecondaryTap: () {
-              final cellValue = dataGridCell.value.toString();
-              _clipboardValues.add(cellValue);
-              final allValues = _clipboardValues.join('\n');
-              Clipboard.setData(ClipboardData(text: allValues));
-              onCopyCellContent?.call(
-                'تم إضافة إلى الحافظة (${_clipboardValues.length} عنصر)',
-              );
-            },
-            onDoubleTap: () {
-              _clipboardValues.clear();
-              final cellValue = dataGridCell.value.toString();
-              Clipboard.setData(ClipboardData(text: cellValue));
-              onCopyCellContent?.call('تم نسخ: $cellValue');
-            },
-            child: Container(
-              alignment: Alignment.center,
-              padding: const EdgeInsets.all(8.0),
-              child: Text(
-                dataGridCell.value.toString(),
-                style: const TextStyle(fontSize: 14),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-              ),
-            ),
+    // Only build cells for visible columns (matching the _columns list)
+    final cells = _columns.map<Widget>((column) {
+      // Find the corresponding cell in the row
+      final dataGridCell = row.getCells().firstWhere(
+            (cell) => cell.columnName == column,
+            orElse: () => DataGridCell(columnName: column, value: ''),
           );
-        }).toList();
+
+      return GestureDetector(
+        onSecondaryTap: () {
+          final cellValue = dataGridCell.value.toString();
+          _clipboardValues.add(cellValue);
+          final allValues = _clipboardValues.join('\n');
+          Clipboard.setData(ClipboardData(text: allValues));
+          onCopyCellContent?.call(
+            'تم إضافة إلى الحافظة (${_clipboardValues.length} عنصر)',
+          );
+        },
+        onDoubleTap: () {
+          _clipboardValues.clear();
+          final cellValue = dataGridCell.value.toString();
+          Clipboard.setData(ClipboardData(text: cellValue));
+          onCopyCellContent?.call('تم نسخ: $cellValue');
+        },
+        child: Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.all(8.0),
+          child: Text(
+            dataGridCell.value.toString(),
+            style: const TextStyle(fontSize: 14),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }).toList();
 
     // Add delete button
     if (_columns.isNotEmpty) {

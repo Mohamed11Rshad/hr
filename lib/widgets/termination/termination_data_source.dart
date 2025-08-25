@@ -72,9 +72,10 @@ class TerminationDataSource extends DataGridSource {
 
     // Safety check to prevent RangeError
     if (rowIndex < 0 || rowIndex >= _data.length) {
-      // Return a row adapter with empty cells matching the column count
+      // Return a row adapter with empty cells matching the visible column count + actions
+      final cellCount = _columns.length + (onRemoveTermination != null ? 1 : 0);
       final emptyCells = List.generate(
-        _columns.length + 1,
+        cellCount,
         (index) => Container(
           alignment: Alignment.center,
           padding: const EdgeInsets.all(8.0),
@@ -86,8 +87,15 @@ class TerminationDataSource extends DataGridSource {
 
     final record = _data[rowIndex];
 
+    // Only build cells for visible columns (matching the _columns list)
     final cells =
-        row.getCells().map<Widget>((dataGridCell) {
+        _columns.map<Widget>((column) {
+          // Find the corresponding cell in the row
+          final dataGridCell = row.getCells().firstWhere(
+            (cell) => cell.columnName == column,
+            orElse: () => DataGridCell(columnName: column, value: ''),
+          );
+
           Widget cellWidget;
 
           // Check if this is the Transfer_Action column
@@ -205,17 +213,19 @@ class TerminationDataSource extends DataGridSource {
         }).toList();
 
     // Add delete button
-    cells.add(
-      Container(
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(4.0),
-        child: IconButton(
-          icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-          onPressed: () => onRemoveTermination?.call(record),
-          tooltip: 'حذف التسريح',
+    if (onRemoveTermination != null) {
+      cells.add(
+        Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.all(4.0),
+          child: IconButton(
+            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+            onPressed: () => onRemoveTermination?.call(record),
+            tooltip: 'حذف التسريح',
+          ),
         ),
-      ),
-    );
+      );
+    }
 
     return DataGridRowAdapter(
       color: rowIndex % 2 == 0 ? Colors.white : Colors.blue.shade50,

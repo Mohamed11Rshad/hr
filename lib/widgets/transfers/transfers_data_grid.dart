@@ -11,6 +11,8 @@ class TransfersDataGrid extends StatefulWidget {
   final List<String> columns;
   final Set<String> hiddenColumns;
   final Function(Map<String, dynamic>) onRemoveTransfer;
+  final Function(Map<String, dynamic>)?
+  onTransferEmployee; // New callback for direct transfer
   final Function(String, String, String) onUpdateField;
   final Function(String) onCopyCellContent;
   final bool Function(DataGridColumnDragDetails)? onColumnDragging;
@@ -22,6 +24,7 @@ class TransfersDataGrid extends StatefulWidget {
     required this.columns,
     required this.hiddenColumns,
     required this.onRemoveTransfer,
+    this.onTransferEmployee, // Optional callback for direct transfer
     required this.onUpdateField,
     required this.onCopyCellContent,
     this.onColumnDragging,
@@ -44,7 +47,10 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
   final ScrollController _verticalController = ScrollController();
   Timer? _scrollTimer;
   TransfersDataSource? _dataSource;
-  int _filteredRecordCount = 0; // Add this
+  int _filteredRecordCount = 0;
+  bool _isUpdating = false; // Flag to prevent rendering during updates
+  List<String> _visibleColumns =
+      []; // Store visible columns to ensure consistency
 
   @override
   void initState() {
@@ -60,16 +66,28 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
   }
 
   void _createDataSource() {
+    // Calculate visible columns once and store them for consistency
+    _visibleColumns =
+        widget.columns
+            .where((col) => !widget.hiddenColumns.contains(col))
+            .toList();
+
     _dataSource = TransfersDataSource(
       widget.data,
-      widget.columns
-          .where((col) => !widget.hiddenColumns.contains(col))
-          .toList(),
+      _visibleColumns, // Use the stored visible columns
       context: context,
       onRemoveTransfer: widget.onRemoveTransfer,
+      onTransferEmployee: widget.onTransferEmployee, // Pass the new callback
       onUpdateField: widget.onUpdateField,
       onCopyCellContent: widget.onCopyCellContent,
     );
+  }
+
+  // Add method to refresh the data grid
+  void refreshDataGrid() {
+    print('Manually refreshing data grid');
+    _createDataSource();
+    setState(() {});
   }
 
   // Add method to get the actual filtered data
@@ -93,23 +111,25 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
   @override
   void didUpdateWidget(TransfersDataGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Recreate data source when data or columns change
+
+    // Only recreate data source when data or columns actually change
     if (oldWidget.data != widget.data ||
         !_listsEqual(oldWidget.columns, widget.columns) ||
         !_setsEqual(oldWidget.hiddenColumns, widget.hiddenColumns)) {
-      _createDataSource();
-      _initializeColumnWidths();
-      // Update filtered count when data changes
+      // Set updating flag and clear data source to prevent mismatched rendering
+      _isUpdating = true;
+      _dataSource = null;
+
+      // Force immediate rebuild with null data source
+      setState(() {});
+
+      // Use a post-frame callback to recreate the data source
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          setState(() {
-            _filteredRecordCount =
-                _dataSource?.effectiveRows.length ?? widget.data.length;
-          });
-          // Notify parent screen
-          if (widget.onFilterChanged != null) {
-            widget.onFilterChanged!(_filteredRecordCount);
-          }
+          _createDataSource();
+          _initializeColumnWidths();
+          _isUpdating = false;
+          setState(() {});
         }
       });
     }
@@ -128,13 +148,9 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
   }
 
   List<GridColumn> _buildGridColumns() {
-    final visibleColumns =
-        widget.columns
-            .where((col) => !widget.hiddenColumns.contains(col))
-            .toList();
-
+    // Use the same visible columns that were used to create the data source
     final columns =
-        visibleColumns.map((column) {
+        _visibleColumns.map((column) {
           return GridColumn(
             columnName: column,
             width: _columnWidths[column] ?? _getColumnWidth(column),
@@ -237,10 +253,8 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
 
   void _initializeColumnWidths() {
     _columnWidths.clear();
-    for (final column in widget.columns) {
-      if (!widget.hiddenColumns.contains(column)) {
-        _columnWidths[column] = _getColumnWidth(column);
-      }
+    for (final column in _visibleColumns) {
+      _columnWidths[column] = _getColumnWidth(column);
     }
     _columnWidths['actions'] = 100.0;
   }
@@ -343,61 +357,71 @@ class TransfersDataGridState extends State<TransfersDataGrid> {
             _buildRecordCountBar(),
             const SizedBox(height: 8.0),
             Expanded(
-              child: SfDataGrid(
-                source: _dataSource!,
-                columnWidthMode: ColumnWidthMode.none,
-                allowSorting: true,
-                allowFiltering: true,
-                allowColumnsDragging: true,
-                selectionMode: SelectionMode.single,
-                showHorizontalScrollbar: true,
-                showVerticalScrollbar: true,
-                isScrollbarAlwaysShown: true,
-                gridLinesVisibility: GridLinesVisibility.both,
-                headerGridLinesVisibility: GridLinesVisibility.both,
-                rowHeight: 50,
-                headerRowHeight: 55,
-                allowColumnsResizing: true,
-                columnResizeMode: ColumnResizeMode.onResize,
-                onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
-                  setState(() {
-                    _columnWidths[details.column.columnName] = details.width;
-                  });
-                  return true;
-                },
-                columnDragFeedbackBuilder: (context, column) {
-                  return Container(
-                    width: _columnWidths[column.columnName] ?? 180,
-                    height: 50,
-                    color: AppColors.primaryColor,
-                    child: Center(
-                      child: Text(
-                        column.columnName,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          decoration: TextDecoration.none,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  );
-                },
-                onFilterChanged: (DataGridFilterChangeDetails details) {
-                  // Update filtered count and force UI refresh
-                  setState(() {
-                    _filteredRecordCount = _dataSource!.effectiveRows.length;
-                  });
+              child:
+                  _isUpdating || _dataSource == null
+                      ? const Center(child: CircularProgressIndicator())
+                      : SfDataGrid(
+                        key: ValueKey(
+                          '${widget.hiddenColumns.toString()}_${_dataSource.hashCode}',
+                        ), // Force rebuild when columns change or data source changes
+                        source: _dataSource!,
+                        columnWidthMode: ColumnWidthMode.none,
+                        allowSorting: true,
+                        allowFiltering: true,
+                        allowColumnsDragging: true,
+                        selectionMode: SelectionMode.single,
+                        showHorizontalScrollbar: true,
+                        showVerticalScrollbar: true,
+                        isScrollbarAlwaysShown: true,
+                        gridLinesVisibility: GridLinesVisibility.both,
+                        headerGridLinesVisibility: GridLinesVisibility.both,
+                        rowHeight: 50,
+                        headerRowHeight: 55,
+                        allowColumnsResizing: true,
+                        columnResizeMode: ColumnResizeMode.onResize,
+                        onColumnResizeUpdate: (
+                          ColumnResizeUpdateDetails details,
+                        ) {
+                          setState(() {
+                            _columnWidths[details.column.columnName] =
+                                details.width;
+                          });
+                          return true;
+                        },
+                        columnDragFeedbackBuilder: (context, column) {
+                          return Container(
+                            width: _columnWidths[column.columnName] ?? 180,
+                            height: 50,
+                            color: AppColors.primaryColor,
+                            child: Center(
+                              child: Text(
+                                column.columnName,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  decoration: TextDecoration.none,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                        onFilterChanged: (DataGridFilterChangeDetails details) {
+                          // Update filtered count and force UI refresh
+                          setState(() {
+                            _filteredRecordCount =
+                                _dataSource!.effectiveRows.length;
+                          });
 
-                  // Notify parent screen
-                  if (widget.onFilterChanged != null) {
-                    widget.onFilterChanged!(_filteredRecordCount);
-                  }
-                },
-                onColumnDragging: widget.onColumnDragging,
-                columns: _buildGridColumns(),
-              ),
+                          // Notify parent screen
+                          if (widget.onFilterChanged != null) {
+                            widget.onFilterChanged!(_filteredRecordCount);
+                          }
+                        },
+                        onColumnDragging: widget.onColumnDragging,
+                        columns: _buildGridColumns(),
+                      ),
             ),
           ],
         ),

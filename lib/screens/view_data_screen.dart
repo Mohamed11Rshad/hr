@@ -35,7 +35,6 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
   final ScrollController _verticalScrollController = ScrollController();
   final ScrollController _horizontalController = ScrollController();
   Timer? _scrollTimer;
-  final int _pageSize = 80;
   final Set<String> _processedBadgeNumbers = {};
   String? _lastCopiedCellInfo;
 
@@ -150,6 +149,14 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
     }
 
     try {
+      // Get column names from table schema first (this works even if table is empty)
+      if (!loadMore) {
+        final columnInfo = await widget.db!.rawQuery(
+          'PRAGMA table_info("$tableName")',
+        );
+        _columns = columnInfo.map((col) => col['name'] as String).toList();
+      }
+
       final offset = loadMore ? _tableData.length : 0;
 
       // Find badge column for ordering
@@ -164,23 +171,31 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
         }
       }
 
+      debugPrint("order by clause: $orderByClause");
+
       final data = await widget.db!.query(
         tableName,
-        limit: _pageSize,
         offset: offset,
         orderBy: orderByClause,
       );
 
-      if (data.isEmpty) {
+      if (data.isEmpty && !loadMore) {
+        // Even if no data, we still have columns from schema
+        setState(() {
+          _tableData = [];
+          _isLoading = false;
+          _isLoadingMore = false;
+          _refreshDataSource();
+        });
+        return;
+      }
+
+      if (data.isEmpty && loadMore) {
         setState(() {
           _isLoading = false;
           _isLoadingMore = false;
         });
         return;
-      }
-
-      if (data.isNotEmpty && !loadMore) {
-        _columns = data.first.keys.toList();
       }
 
       final processedData = DataProcessor.processAndMarkDifferentCells(
@@ -377,19 +392,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
 
   // Add method to refresh data source with current column visibility
   void _refreshDataSource() {
-    if (_tableData.isEmpty) {
-      // Handle empty data case
-      _dataSource = TableDataSource(
-        [],
-        [],
-        _arabicColumnNames,
-        onDeleteRecord: _deleteRecord,
-        onCellSelected: _onCellSelected,
-        onCopyCellContent: _copyCellContent,
-      );
-      return;
-    }
-
+    // Even if tableData is empty, we might still have columns from table schema
     final visibleColumns =
         _columns
             .where(
@@ -402,7 +405,7 @@ class _ViewDataScreenState extends State<ViewDataScreen> {
             .toList();
 
     _dataSource = TableDataSource(
-      _tableData,
+      _tableData, // Can be empty
       visibleColumns,
       _arabicColumnNames,
       onDeleteRecord: _deleteRecord,

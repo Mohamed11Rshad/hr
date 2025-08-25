@@ -1,27 +1,43 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
+import 'package:hr/services/editable_data_service.dart';
+import 'package:hr/services/database_service.dart';
 
 class TransfersDataSource extends DataGridSource {
   final List<Map<String, dynamic>> _data;
   final List<String> _columns;
   final BuildContext context;
   final Function(Map<String, dynamic>)? onRemoveTransfer;
+  final Function(Map<String, dynamic>)?
+      onTransferEmployee; // New callback for direct transfer
   final Function(String, String, String)? onUpdateField;
   final Function(String)? onCopyCellContent;
   final Set<String> _clipboardValues = <String>{};
   List<DataGridRow> _dataGridRows = [];
+  EditableDataService? _editableDataService;
 
   TransfersDataSource(
     this._data,
     this._columns, {
     required this.context,
     this.onRemoveTransfer,
+    this.onTransferEmployee, // Add the new callback parameter
     this.onUpdateField,
     this.onCopyCellContent,
   }) {
     _buildDataGridRows();
+    _initializeEditableDataService();
+  }
+
+  Future<void> _initializeEditableDataService() async {
+    try {
+      final db = await DatabaseService.openDatabase();
+      _editableDataService = EditableDataService(db);
+      await _editableDataService!.initializeEditableDataTable();
+    } catch (e) {
+      print('Error initializing editable data service: $e');
+    }
   }
 
   void clearSelection() {
@@ -39,25 +55,23 @@ class TransfersDataSource extends DataGridSource {
   }
 
   void _buildDataGridRows() {
-    _dataGridRows =
-        _data.map<DataGridRow>((dataRow) {
-          return DataGridRow(
-            cells:
-                _columns.map<DataGridCell>((column) {
-                  return DataGridCell<String>(
-                    columnName: column,
-                    value: dataRow[column]?.toString() ?? '',
-                  );
-                }).toList(),
+    _dataGridRows = _data.map<DataGridRow>((dataRow) {
+      return DataGridRow(
+        cells: _columns.map<DataGridCell>((column) {
+          return DataGridCell<String>(
+            columnName: column,
+            value: dataRow[column]?.toString() ?? '',
           );
-        }).toList();
+        }).toList(),
+      );
+    }).toList();
   }
 
   @override
   List<DataGridRow> get rows => _dataGridRows;
 
   bool _isFieldEditable(String columnName) {
-    const editableFields = {'POD', 'ERD', 'Available_in_ERD'};
+    const editableFields = {'ERD', 'POD', 'Available_in_ERD'};
     return editableFields.contains(columnName);
   }
 
@@ -87,10 +101,9 @@ class TransfersDataSource extends DataGridSource {
 
   Widget _buildRegularCell(DataGridCell dataGridCell) {
     // Convert Arabic values to English for display
-    final displayValue =
-        dataGridCell.columnName == 'DONE_YES_NO'
-            ? _normalizeDropdownValue(dataGridCell.value.toString())
-            : dataGridCell.value.toString();
+    final displayValue = dataGridCell.columnName == 'DONE_YES_NO'
+        ? _normalizeDropdownValue(dataGridCell.value.toString())
+        : dataGridCell.value.toString();
 
     return Container(
       alignment: Alignment.center,
@@ -105,53 +118,116 @@ class TransfersDataSource extends DataGridSource {
     );
   }
 
-  Widget _buildEditableCell(
-    Map<String, dynamic> record,
-    DataGridCell dataGridCell,
-  ) {
-    // Check if this is the dropdown field
-    if (_isDropdownField(dataGridCell.columnName)) {
-      return _buildDropdownCell(record, dataGridCell);
-    }
+  Widget _buildEditableCell(Map<String, dynamic> record, String columnName) {
+    final badgeNo = record['Badge_NO']?.toString() ?? '';
 
-    return Container(
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(4.0),
-      child: InkWell(
-        onTap:
-            () => _showEditDialog(
-              record,
-              dataGridCell.columnName,
-              dataGridCell.value.toString(),
+    return FutureBuilder<String>(
+      future: _getEditableValue(badgeNo, columnName),
+      builder: (context, snapshot) {
+        // Get the current value from the editable data service, fallback to record data
+        String currentValue = snapshot.data ?? '';
+        if (currentValue.isEmpty) {
+          currentValue = record[columnName]?.toString() ?? '';
+        }
+
+        return InkWell(
+          onTap: () => _showEditDialog(record, columnName, currentValue),
+          child: Container(
+            width: double.infinity,
+            height: 40, // Fixed height to ensure visibility
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.blue.shade300, width: 1),
+              borderRadius: BorderRadius.circular(4),
+              color: Colors.blue.shade50,
             ),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.blue.shade300),
-            borderRadius: BorderRadius.circular(4),
-            color: Colors.blue.shade50,
-          ),
-          child: Text(
-            dataGridCell.value.toString().isEmpty
-                ? 'Click to edit'
-                : dataGridCell.value.toString(),
-            style: TextStyle(
-              fontSize: 12.w.clamp(12, 14),
-              color:
-                  dataGridCell.value.toString().isEmpty
+            child: Center(
+              child: Text(
+                currentValue.isEmpty ? 'انقر للتعديل' : currentValue,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: currentValue.isEmpty
                       ? Colors.grey.shade600
                       : Colors.blue.shade700,
-              fontStyle:
-                  dataGridCell.value.toString().isEmpty
+                  fontStyle: currentValue.isEmpty
                       ? FontStyle.italic
                       : FontStyle.normal,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDropdownCell(Map<String, dynamic> record, String columnName) {
+    final currentValue =
+        _normalizeDropdownValue(record[columnName]?.toString() ?? '');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(4),
+        color: Colors.white,
+      ),
+      child: DropdownButton<String>(
+        value: currentValue.isEmpty ? null : currentValue,
+        hint: Text(
+          'Select',
+          style: TextStyle(
+            color: Colors.grey.shade600,
+            fontSize: 14,
           ),
         ),
+        isExpanded: true,
+        underline: Container(), // Remove default underline
+        icon: Icon(
+          Icons.arrow_drop_down,
+          color: Colors.blue.shade700,
+        ),
+        style: const TextStyle(
+          color: Colors.black87,
+          fontSize: 14,
+        ),
+        items: const [
+          DropdownMenuItem(
+            value: 'Done',
+            child: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green, size: 16),
+                SizedBox(width: 8),
+                Text('Done', style: TextStyle(fontSize: 14)),
+              ],
+            ),
+          ),
+          DropdownMenuItem(
+            value: 'Yes',
+            child: Row(
+              children: [
+                Icon(Icons.thumb_up, color: Colors.blue, size: 16),
+                SizedBox(width: 8),
+                Text('Yes', style: TextStyle(fontSize: 14)),
+              ],
+            ),
+          ),
+          DropdownMenuItem(
+            value: 'No',
+            child: Row(
+              children: [
+                Icon(Icons.thumb_down, color: Colors.red, size: 16),
+                SizedBox(width: 8),
+                Text('No', style: TextStyle(fontSize: 14)),
+              ],
+            ),
+          ),
+        ],
+        onChanged: (value) =>
+            _handleDropdownChange(record, columnName, value ?? ''),
       ),
     );
   }
@@ -181,95 +257,65 @@ class TransfersDataSource extends DataGridSource {
     final controller = TextEditingController(text: currentValue);
     final result = await showDialog<String>(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text('تعديل $fieldName'),
-            content: TextField(
-              controller: controller,
-              decoration: InputDecoration(
-                labelText: fieldName,
-                border: const OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed:
-                    () => Navigator.of(context).pop(controller.text.trim()),
-                child: const Text('حفظ'),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: Text('تعديل $fieldName'),
+        content: TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            labelText: fieldName,
+            border: const OutlineInputBorder(),
           ),
-    );
-
-    if (result != null && onUpdateField != null) {
-      final sNo = record['S_NO']?.toString() ?? '';
-      onUpdateField!(sNo, fieldName, result);
-    }
-  }
-
-  Widget _buildDropdownCell(
-    Map<String, dynamic> record,
-    DataGridCell dataGridCell,
-  ) {
-    final currentValue = dataGridCell.value.toString();
-    final normalizedValue = _normalizeDropdownValue(currentValue);
-
-    return Container(
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(4.0),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.green.shade300),
-          borderRadius: BorderRadius.circular(4),
-          color: Colors.green.shade50,
+          maxLines: 3,
         ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<String>(
-            value: normalizedValue.isEmpty ? null : normalizedValue,
-            hint: const Text(
-              'Select',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
-            isExpanded: true,
-            items: const [
-              DropdownMenuItem(value: 'Done', child: Text('Done')),
-              DropdownMenuItem(value: 'Yes', child: Text('Yes')),
-              DropdownMenuItem(value: 'No', child: Text('No')),
-              DropdownMenuItem(value: 'Cancel', child: Text('Cancel')),
-            ],
-            onChanged: (String? newValue) {
-              if (newValue != null && onUpdateField != null) {
-                final sNo = record['S_NO']?.toString() ?? '';
-
-                switch (newValue) {
-                  case 'Done':
-                    onUpdateField!(sNo, dataGridCell.columnName, newValue);
-                    break;
-                  case 'No':
-                    onRemoveTransfer?.call(record);
-                    break;
-                  case 'Yes':
-                    onUpdateField!(sNo, dataGridCell.columnName, newValue);
-                    break;
-                  case 'Cancel':
-                    break;
-                }
-              }
-            },
-            style: TextStyle(fontSize: 12, color: Colors.green.shade700),
-            dropdownColor: Colors.green.shade50,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('إلغاء'),
           ),
-        ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('حفظ'),
+          ),
+        ],
       ),
     );
+
+    if (result != null && _editableDataService != null) {
+      final badgeNo = record['Badge_NO']?.toString() ?? '';
+      final employeeName = record['Employee_Name']?.toString() ?? '';
+
+      // Save to editable data service
+      await _editableDataService!.saveEditableData(
+        badgeNo: badgeNo,
+        employeeName: employeeName,
+        screenType: 'transfers',
+        columnName: fieldName,
+        value: result,
+        timestamp: DateTime.now(),
+      );
+
+      // Update the record in the original data
+      record[fieldName] = result;
+
+      // Force rebuild data grid rows
+      _buildDataGridRows();
+
+      // Force notify listeners to refresh UI
+      notifyListeners();
+
+      // Add a small delay and notify again to ensure refresh
+      Future.delayed(const Duration(milliseconds: 100), () {
+        notifyListeners();
+      });
+
+      // Notify parent if callback is provided
+      if (onUpdateField != null) {
+        final sNo = record['S_NO']?.toString() ?? '';
+        onUpdateField!(sNo, fieldName, result);
+      }
+
+      print('Data saved and refreshed for $fieldName: $result');
+    }
   }
 
   // Add method to refresh data source
@@ -284,47 +330,179 @@ class TransfersDataSource extends DataGridSource {
 
     // Safety check to prevent RangeError
     if (rowIndex < 0 || rowIndex >= _data.length) {
-      // Return an empty row if index is out of bounds
+      // Return an empty row with proper cell count
+      final cellCount = _columns.length + (onRemoveTransfer != null ? 1 : 0);
       return DataGridRowAdapter(
-        cells:
-            _columns.map<Widget>((column) => Container()).toList()
-              ..add(Container()),
+        cells: List.generate(cellCount, (index) => Container()),
       );
     }
 
     final record = _data[rowIndex];
 
-    final cells =
-        row.getCells().map<Widget>((dataGridCell) {
-          return Container(
-            alignment: Alignment.center,
-            padding: const EdgeInsets.all(8.0),
-            child: Text(
-              dataGridCell.value.toString(),
-              style: const TextStyle(fontSize: 14),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-            ),
+    // Only build cells for visible columns (matching the _columns list)
+    final cells = _columns.map<Widget>((column) {
+      // Find the corresponding cell in the row
+      final dataGridCell = row.getCells().firstWhere(
+            (cell) => cell.columnName == column,
+            orElse: () => DataGridCell(columnName: column, value: ''),
           );
-        }).toList();
+
+      // Handle dropdown field (DONE_YES_NO)
+      if (_isDropdownField(column)) {
+        return Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.all(4.0),
+          child: _buildDropdownCell(record, column),
+        );
+      }
+
+      // Handle editable fields
+      if (_isFieldEditable(column)) {
+        return Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.all(4.0),
+          child: _buildEditableCell(record, column),
+        );
+      }
+
+      // Regular non-editable cell
+      return Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(8.0),
+        child: Text(
+          dataGridCell.value.toString(),
+          style: const TextStyle(fontSize: 14),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+        ),
+      );
+    }).toList();
 
     // Add delete button
-    cells.add(
-      Container(
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(4.0),
-        child: IconButton(
-          icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-          onPressed: () => onRemoveTransfer?.call(record),
-          tooltip: 'حذف التنقل',
+    if (onRemoveTransfer != null) {
+      cells.add(
+        Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.all(4.0),
+          child: IconButton(
+            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+            onPressed: () => onRemoveTransfer?.call(record),
+            tooltip: 'حذف التنقل',
+          ),
         ),
-      ),
-    );
+      );
+    }
 
     return DataGridRowAdapter(
       color: rowIndex % 2 == 0 ? Colors.white : Colors.blue.shade50,
       cells: cells,
     );
+  }
+
+  Future<String> _getEditableValue(String badgeNo, String columnName) async {
+    if (_editableDataService == null) return '';
+
+    try {
+      // First, check if this employee has a valid transfer record with basic data
+      final currentRecord = _data.firstWhere(
+        (item) => item['Badge_NO']?.toString() == badgeNo,
+        orElse: () => <String, dynamic>{},
+      );
+
+      // If the transfer record is missing critical data, don't show old editable values
+      if (currentRecord.isEmpty ||
+          (currentRecord['Employee_Name']?.toString().isEmpty ?? true)) {
+        print(
+            'Transfer record for $badgeNo is incomplete, not showing old editable values');
+        return '';
+      }
+
+      final editableData = await _editableDataService!.getEditableData(
+        badgeNo: badgeNo,
+        screenType: 'transfers',
+      );
+      return editableData[columnName] ?? '';
+    } catch (e) {
+      print('Error getting editable value: $e');
+      return '';
+    }
+  }
+
+  Future<void> _handleDropdownChange(
+      Map<String, dynamic> record, String columnName, String value) async {
+    final badgeNo = record['Badge_NO']?.toString() ?? '';
+    final employeeName = record['Employee_Name']?.toString() ?? '';
+
+    // Update the record
+    record[columnName] = value;
+
+    // Handle different dropdown values
+    if (value == 'Done') {
+      // Save the dropdown change first
+      if (_editableDataService != null) {
+        await _editableDataService!.saveEditableData(
+          badgeNo: badgeNo,
+          employeeName: employeeName,
+          screenType: 'transfers',
+          columnName: columnName,
+          value: value,
+          timestamp: DateTime.now(),
+        );
+      }
+
+      // Then transfer to transferred screen directly without confirmation
+      if (onTransferEmployee != null) {
+        onTransferEmployee!(
+            record); // This will remove the record from the list
+        // No need to rebuild here since the record is being removed
+        return; // Exit early since the record is being transferred
+      } else {
+        // Fallback to the old method if callback not provided
+        await _transferEmployee(record);
+        return; // Exit early since the record is being transferred
+      }
+    } else if (value == 'No') {
+      // Delete this employee (this will show confirmation)
+      onRemoveTransfer?.call(record);
+      return; // Exit early since the record might be removed
+    }
+
+    // Save to editable data service (for other values like 'Yes')
+    if (_editableDataService != null) {
+      await _editableDataService!.saveEditableData(
+        badgeNo: badgeNo,
+        employeeName: employeeName,
+        screenType: 'transfers',
+        columnName: columnName,
+        value: value,
+        timestamp: DateTime.now(),
+      );
+    }
+
+    // Rebuild data grid rows (only for values that don't remove the record)
+    _buildDataGridRows();
+    notifyListeners();
+  }
+
+  Future<void> _transferEmployee(Map<String, dynamic> record) async {
+    if (_editableDataService == null) return;
+
+    try {
+      final badgeNo = record['Badge_NO']?.toString() ?? '';
+      await _editableDataService!.transferEmployeeToTransferred(
+        badgeNo: badgeNo,
+        transferData: record,
+      );
+
+      // Remove from current transfers list
+      onRemoveTransfer?.call(record);
+
+      // Show success message
+      onCopyCellContent?.call('تم نقل الموظف إلى شاشة المنقولين بنجاح');
+    } catch (e) {
+      print('Error transferring employee: $e');
+      onCopyCellContent?.call('خطأ في نقل الموظف: $e');
+    }
   }
 }
